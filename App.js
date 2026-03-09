@@ -1,5 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
+import { WebView } from "react-native-webview";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -16,6 +17,86 @@ const CREDENTIALS = {
   user: { username: "user", password: "user123" },
   admin: { username: "admin", password: "admin123" },
 };
+
+const LEAFLET_HTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #map { width: 100%; height: 100%; }
+    .legend {
+      background: white;
+      padding: 10px 14px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      line-height: 1.9;
+      font-family: sans-serif;
+      font-size: 13px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 8px; }
+    .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    var map = L.map('map').setView([48.5, 32.0], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 18
+    }).addTo(map);
+
+    var redZones = [
+      { center: [48.0, 37.8], radius: 80000, label: 'Donetsk Region' },
+      { center: [46.6, 33.0], radius: 60000, label: 'Kherson Region' },
+      { center: [47.1, 38.5], radius: 50000, label: 'Mariupol Area' }
+    ];
+    redZones.forEach(function(z) {
+      L.circle(z.center, {
+        color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.3, weight: 2, radius: z.radius
+      }).addTo(map).bindPopup('<b style="color:#dc2626">&#9888; Danger Zone</b><br>' + z.label);
+    });
+
+    var yellowZones = [
+      { center: [47.84, 35.14], radius: 70000, label: 'Zaporizhzhia Region' },
+      { center: [49.99, 36.23], radius: 65000, label: 'Kharkiv Region' },
+      { center: [48.9, 38.0],  radius: 45000, label: 'Luhansk Borders' }
+    ];
+    yellowZones.forEach(function(z) {
+      L.circle(z.center, {
+        color: '#d97706', fillColor: '#fbbf24', fillOpacity: 0.3, weight: 2, radius: z.radius
+      }).addTo(map).bindPopup('<b style="color:#d97706">&#9889; Caution Zone</b><br>' + z.label);
+    });
+
+    var greenZones = [
+      { center: [50.45, 30.52], radius: 60000, label: 'Kyiv' },
+      { center: [49.84, 24.03], radius: 55000, label: 'Lviv' },
+      { center: [49.23, 28.47], radius: 50000, label: 'Vinnytsia' }
+    ];
+    greenZones.forEach(function(z) {
+      L.circle(z.center, {
+        color: '#16a34a', fillColor: '#4ade80', fillOpacity: 0.3, weight: 2, radius: z.radius
+      }).addTo(map).bindPopup('<b style="color:#16a34a">&#10003; Safe Zone</b><br>' + z.label);
+    });
+
+    var legend = L.control({ position: 'bottomright' });
+    legend.onAdd = function() {
+      var div = L.DomUtil.create('div', 'legend');
+      div.innerHTML =
+        '<div class="legend-item"><span class="dot" style="background:#dc2626"></span> Danger Zone</div>' +
+        '<div class="legend-item"><span class="dot" style="background:#fbbf24"></span> Caution Zone</div>' +
+        '<div class="legend-item"><span class="dot" style="background:#4ade80"></span> Safe Zone</div>';
+      return div;
+    };
+    legend.addTo(map);
+  <\/script>
+</body>
+</html>
+`;
 
 function LoginScreen({ onLogin }) {
   const [role, setRole] = useState("user");
@@ -120,8 +201,35 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+function MapScreen({ onBack }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: "#0f172a" }}>
+      <View style={styles.mapHeader}>
+        <TouchableOpacity onPress={onBack} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.mapTitle}>Zone Map</Text>
+        <View style={{ width: 70 }} />
+      </View>
+      <WebView
+        source={{ html: LEAFLET_HTML }}
+        style={{ flex: 1 }}
+        originWhitelist={["*"]}
+        javaScriptEnabled
+        domStorageEnabled
+        startInLoadingState
+      />
+    </View>
+  );
+}
+
 function DashboardScreen({ role, username, onLogout }) {
   const isAdmin = role === "admin";
+  const [showMap, setShowMap] = useState(false);
+
+  if (showMap) {
+    return <MapScreen onBack={() => setShowMap(false)} />;
+  }
 
   return (
     <View style={styles.dashContainer}>
@@ -141,10 +249,10 @@ function DashboardScreen({ role, username, onLogout }) {
             <Text style={styles.tileIcon}>📡</Text>
             <Text style={styles.tileLabel}>Network Status</Text>
           </View>
-          <View style={[styles.tile, { backgroundColor: "#f0fdf4" }]}>
+          <TouchableOpacity style={[styles.tile, { backgroundColor: "#f0fdf4" }]} onPress={() => setShowMap(true)}>
             <Text style={styles.tileIcon}>🗺️</Text>
             <Text style={styles.tileLabel}>Map</Text>
-          </View>
+          </TouchableOpacity>
         </View>
         <View style={styles.tileRow}>
           <View style={[styles.tile, { backgroundColor: "#fff7ed" }]}>
@@ -394,4 +502,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   logoutText: { color: "#ef4444", fontWeight: "700", fontSize: 15 },
+  mapHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#1e293b",
+    paddingTop: Platform.OS === "android" ? 40 : 56,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
+  },
+  backButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: "#334155",
+    borderRadius: 8,
+    minWidth: 70,
+    alignItems: "center",
+  },
+  backButtonText: { color: "#93c5fd", fontWeight: "600", fontSize: 14 },
+  mapTitle: { color: "#f1f5f9", fontWeight: "700", fontSize: 17 },
 });
