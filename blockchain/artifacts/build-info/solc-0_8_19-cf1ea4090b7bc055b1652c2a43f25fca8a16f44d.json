@@ -1,0 +1,35 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_19-cf1ea4090b7bc055b1652c2a43f25fca8a16f44d",
+  "solcVersion": "0.8.19",
+  "solcLongVersion": "0.8.19+commit.7dd6d404",
+  "userSourceNameMap": {
+    "contracts/UserRegistry.sol": "project/contracts/UserRegistry.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "paris",
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode",
+            "evm.deployedBytecode",
+            "evm.methodIdentifiers",
+            "metadata"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/UserRegistry.sol": {
+        "content": "// SPDX-License-Identifier: MIT\r\npragma solidity ^0.8.19;\r\n\r\n/**\r\n * @title UserRegistry\r\n * @dev Stores WarSafe Network user registrations on-chain.\r\n *      Passwords are pre-hashed by the client (keccak256) before\r\n *      being sent, so plain-text credentials never touch the chain.\r\n */\r\ncontract UserRegistry {\r\n    struct User {\r\n        string   username;\r\n        string   role;\r\n        bytes32  passwordHash; // keccak256 of the plain password, hashed client-side\r\n        uint256  registeredAt;\r\n        bool     exists;\r\n    }\r\n\r\n    // key = keccak256(abi.encodePacked(username, role))\r\n    mapping(bytes32 => User) private users;\r\n\r\n    event UserRegistered(\r\n        bytes32 indexed usernameHash,\r\n        string  role,\r\n        uint256 timestamp\r\n    );\r\n\r\n    // ─── Write ────────────────────────────────────────────────────────────────\r\n\r\n    /**\r\n     * @param _username     Plain username string\r\n     * @param _role         \"user\" or \"admin\"\r\n     * @param _passwordHash keccak256 of the password, computed client-side\r\n     */\r\n    function registerUser(\r\n        string  memory _username,\r\n        string  memory _role,\r\n        bytes32        _passwordHash\r\n    ) external {\r\n        require(bytes(_username).length >= 3, \"Username too short\");\r\n        require(\r\n            keccak256(bytes(_role)) == keccak256(bytes(\"user\")) ||\r\n            keccak256(bytes(_role)) == keccak256(bytes(\"admin\")),\r\n            \"Invalid role\"\r\n        );\r\n\r\n        bytes32 key = _userKey(_username, _role);\r\n        require(!users[key].exists, \"Username already taken\");\r\n\r\n        users[key] = User({\r\n            username:     _username,\r\n            role:         _role,\r\n            passwordHash: _passwordHash,\r\n            registeredAt: block.timestamp,\r\n            exists:       true\r\n        });\r\n\r\n        emit UserRegistered(key, _role, block.timestamp);\r\n    }\r\n\r\n    // ─── Read (view) ──────────────────────────────────────────────────────────\r\n\r\n    /**\r\n     * @dev Validates login credentials. Returns true only if the user exists\r\n     *      and the supplied password hash matches the stored one.\r\n     */\r\n    function validateLogin(\r\n        string  memory _username,\r\n        string  memory _role,\r\n        bytes32        _passwordHash\r\n    ) external view returns (bool) {\r\n        bytes32 key = _userKey(_username, _role);\r\n        if (!users[key].exists) return false;\r\n        return users[key].passwordHash == _passwordHash;\r\n    }\r\n\r\n    /**\r\n     * @dev Returns true if the username+role pair is already registered.\r\n     */\r\n    function userExists(\r\n        string memory _username,\r\n        string memory _role\r\n    ) external view returns (bool) {\r\n        return users[_userKey(_username, _role)].exists;\r\n    }\r\n\r\n    /**\r\n     * @dev Returns public profile info (role + registration timestamp).\r\n     */\r\n    function getUserInfo(\r\n        string memory _username,\r\n        string memory _role\r\n    ) external view returns (string memory, uint256) {\r\n        bytes32 key = _userKey(_username, _role);\r\n        require(users[key].exists, \"User not found\");\r\n        return (users[key].role, users[key].registeredAt);\r\n    }\r\n\r\n    // ─── Internal ─────────────────────────────────────────────────────────────\r\n\r\n    function _userKey(\r\n        string memory _username,\r\n        string memory _role\r\n    ) internal pure returns (bytes32) {\r\n        return keccak256(abi.encodePacked(_username, _role));\r\n    }\r\n}\r\n"
+      }
+    }
+  }
+}

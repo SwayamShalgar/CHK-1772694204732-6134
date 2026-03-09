@@ -1,7 +1,8 @@
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { WebView } from "react-native-webview";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -12,11 +13,23 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import {
+  registerUserOnChain,
+  validateLoginOnChain,
+} from "./src/blockchain/blockchainService";
+import {
+  saveSession,
+  getSession,
+  clearSession,
+  sessionExpiryLabel,
+} from "./src/utils/sessionManager";
 
-const CREDENTIALS = {
-  user: { username: "user", password: "user123" },
-  admin: { username: "admin", password: "admin123" },
+const SEED_USERS = {
+  user: [{ username: "user", password: "user123" }],
+  admin: [{ username: "admin", password: "admin123" }],
 };
+
+const ADMIN_INVITE_CODE = "WARSAFE2024";
 
 const LEAFLET_HTML = `
 <!DOCTYPE html>
@@ -39,43 +52,77 @@ const LEAFLET_HTML = `
     }
     .legend-item { display: flex; align-items: center; gap: 8px; }
     .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .safehouse-icon {
+      background: #16a34a;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+      line-height: 1;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <script>
-    var map = L.map('map').setView([48.5, 32.0], 6);
+    var map = L.map('map').setView([22.5, 80.5], 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 18
     }).addTo(map);
 
+    /* ── RED ZONES: Active border/conflict areas ── */
     var redZones = [
-      { center: [48.0, 37.8], radius: 80000, label: 'Donetsk Region' },
-      { center: [46.6, 33.0], radius: 60000, label: 'Kherson Region' },
-      { center: [47.1, 38.5], radius: 50000, label: 'Mariupol Area' }
+      { center: [34.2, 77.6],  radius: 130000, label: 'Ladakh – India-China-Pakistan Tri-Border' },
+      { center: [33.4, 74.4],  radius: 100000, label: 'Line of Control – Jammu & Kashmir' },
+      { center: [31.4, 74.8],  radius: 80000,  label: 'India-Pakistan Border – Punjab' },
+      { center: [27.2, 70.8],  radius: 100000, label: 'India-Pakistan Border – Rajasthan' },
+      { center: [27.8, 97.2],  radius: 90000,  label: 'India-China Border – Arunachal Pradesh' },
+      { center: [27.5, 88.5],  radius: 70000,  label: 'India-China Border – Sikkim' },
+      { center: [23.8, 93.8],  radius: 80000,  label: 'India-Myanmar Border – Manipur' }
     ];
     redZones.forEach(function(z) {
       L.circle(z.center, {
-        color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.3, weight: 2, radius: z.radius
+        color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.35, weight: 2, radius: z.radius
       }).addTo(map).bindPopup('<b style="color:#dc2626">&#9888; Danger Zone</b><br>' + z.label);
     });
 
+    /* ── YELLOW ZONES: Buffer / caution areas near borders ── */
     var yellowZones = [
-      { center: [47.84, 35.14], radius: 70000, label: 'Zaporizhzhia Region' },
-      { center: [49.99, 36.23], radius: 65000, label: 'Kharkiv Region' },
-      { center: [48.9, 38.0],  radius: 45000, label: 'Luhansk Borders' }
+      { center: [32.5, 75.5],  radius: 90000,  label: 'Jammu Region Buffer Zone' },
+      { center: [30.7, 76.5],  radius: 85000,  label: 'Punjab-Himachal Border Buffer' },
+      { center: [25.5, 71.5],  radius: 95000,  label: 'Rajasthan Desert Buffer Zone' },
+      { center: [24.5, 68.5],  radius: 75000,  label: 'Gujarat-Pakistan Border Buffer' },
+      { center: [26.2, 91.7],  radius: 90000,  label: 'Assam-Bangladesh Border Zone' },
+      { center: [23.5, 92.5],  radius: 80000,  label: 'Tripura-Bangladesh Buffer' },
+      { center: [26.5, 94.5],  radius: 85000,  label: 'Nagaland-Myanmar Buffer Zone' },
+      { center: [29.0, 80.5],  radius: 80000,  label: 'Uttarakhand-Nepal-China Buffer' }
     ];
     yellowZones.forEach(function(z) {
       L.circle(z.center, {
-        color: '#d97706', fillColor: '#fbbf24', fillOpacity: 0.3, weight: 2, radius: z.radius
+        color: '#d97706', fillColor: '#fbbf24', fillOpacity: 0.35, weight: 2, radius: z.radius
       }).addTo(map).bindPopup('<b style="color:#d97706">&#9889; Caution Zone</b><br>' + z.label);
     });
 
+    /* ── GREEN ZONES: Safe interior cities ── */
     var greenZones = [
-      { center: [50.45, 30.52], radius: 60000, label: 'Kyiv' },
-      { center: [49.84, 24.03], radius: 55000, label: 'Lviv' },
-      { center: [49.23, 28.47], radius: 50000, label: 'Vinnytsia' }
+      { center: [28.61, 77.21], radius: 75000,  label: 'New Delhi – National Capital' },
+      { center: [19.08, 72.88], radius: 80000,  label: 'Mumbai – Financial Capital' },
+      { center: [12.97, 77.59], radius: 70000,  label: 'Bengaluru – Tech Hub' },
+      { center: [17.39, 78.49], radius: 70000,  label: 'Hyderabad' },
+      { center: [13.08, 80.27], radius: 65000,  label: 'Chennai' },
+      { center: [22.57, 88.36], radius: 65000,  label: 'Kolkata' },
+      { center: [18.52, 73.86], radius: 60000,  label: 'Pune' },
+      { center: [23.02, 72.57], radius: 65000,  label: 'Ahmedabad' },
+      { center: [21.16, 79.09], radius: 60000,  label: 'Nagpur – Central India' },
+      { center: [26.85, 80.95], radius: 65000,  label: 'Lucknow' },
+      { center: [15.34, 75.14], radius: 55000,  label: 'Dharwad – Karnataka Interior' },
+      { center: [20.45, 85.84], radius: 60000,  label: 'Bhubaneswar – Odisha' }
     ];
     greenZones.forEach(function(z) {
       L.circle(z.center, {
@@ -83,13 +130,47 @@ const LEAFLET_HTML = `
       }).addTo(map).bindPopup('<b style="color:#16a34a">&#10003; Safe Zone</b><br>' + z.label);
     });
 
+    /* ── SAFEHOUSE MARKERS in green zones ── */
+    var safehouseIcon = L.divIcon({
+      className: '',
+      html: '<div class="safehouse-icon">&#127968;<\/div>',
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+      popupAnchor: [0, -18]
+    });
+
+    var safehouses = [
+      { pos: [28.61, 77.21],  name: 'Delhi Safehouse',      city: 'New Delhi' },
+      { pos: [19.10, 72.86],  name: 'Mumbai Safehouse',     city: 'Mumbai' },
+      { pos: [12.95, 77.62],  name: 'Bengaluru Safehouse',  city: 'Bengaluru' },
+      { pos: [17.41, 78.47],  name: 'Hyderabad Safehouse',  city: 'Hyderabad' },
+      { pos: [13.06, 80.25],  name: 'Chennai Safehouse',    city: 'Chennai' },
+      { pos: [22.55, 88.38],  name: 'Kolkata Safehouse',    city: 'Kolkata' },
+      { pos: [18.50, 73.88],  name: 'Pune Safehouse',       city: 'Pune' },
+      { pos: [23.04, 72.55],  name: 'Ahmedabad Safehouse',  city: 'Ahmedabad' },
+      { pos: [21.14, 79.11],  name: 'Nagpur Safehouse',     city: 'Nagpur' },
+      { pos: [26.87, 80.93],  name: 'Lucknow Safehouse',    city: 'Lucknow' }
+    ];
+    safehouses.forEach(function(s) {
+      L.marker(s.pos, { icon: safehouseIcon })
+        .addTo(map)
+        .bindPopup(
+          '<b style="color:#16a34a">&#127968; ' + s.name + '<\/b>' +
+          '<br><span style="font-size:12px">City: ' + s.city + '<\/span>' +
+          '<br><span style="font-size:11px;color:#6b7280">Verified Safe Location<\/span>'
+        );
+    });
+
+    /* ── LEGEND ── */
     var legend = L.control({ position: 'bottomright' });
     legend.onAdd = function() {
       var div = L.DomUtil.create('div', 'legend');
       div.innerHTML =
-        '<div class="legend-item"><span class="dot" style="background:#dc2626"></span> Danger Zone</div>' +
-        '<div class="legend-item"><span class="dot" style="background:#fbbf24"></span> Caution Zone</div>' +
-        '<div class="legend-item"><span class="dot" style="background:#4ade80"></span> Safe Zone</div>';
+        '<b style="font-size:13px">India Zone Map<\/b><br><br>' +
+        '<div class="legend-item"><span class="dot" style="background:#dc2626"><\/span> Danger Zone (Border)<\/div>' +
+        '<div class="legend-item"><span class="dot" style="background:#fbbf24"><\/span> Caution Zone (Buffer)<\/div>' +
+        '<div class="legend-item"><span class="dot" style="background:#4ade80"><\/span> Safe Zone (Interior)<\/div>' +
+        '<div class="legend-item" style="margin-top:4px">&#127968; Safehouse<\/div>';
       return div;
     };
     legend.addTo(map);
@@ -98,19 +179,23 @@ const LEAFLET_HTML = `
 </html>
 `;
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, onSignup, users, isLoading }) {
   const [role, setRole] = useState("user");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = () => {
-    const creds = CREDENTIALS[role];
-    if (username.trim() === creds.username && password === creds.password) {
-      onLogin(role, username.trim());
-    } else {
-      Alert.alert("Login Failed", "Invalid username or password.");
+    if (!username.trim()) {
+      Alert.alert("Error", "Please enter your username.");
+      return;
     }
+    if (!password) {
+      Alert.alert("Error", "Please enter your password.");
+      return;
+    }
+    // Validation and blockchain call handled by App's handleLogin
+    onLogin(role, username.trim(), password);
   };
 
   return (
@@ -183,16 +268,197 @@ function LoginScreen({ onLogin }) {
           </View>
 
           <TouchableOpacity
-            style={[styles.loginButton, role === "admin" ? styles.loginButtonAdmin : styles.loginButtonUser]}
+            style={[styles.loginButton, role === "admin" ? styles.loginButtonAdmin : styles.loginButtonUser, isLoading && styles.buttonDisabled]}
             onPress={handleLogin}
             activeOpacity={0.85}
+            disabled={isLoading}
           >
-            <Text style={styles.loginButtonText}>Sign In as {role === "admin" ? "Admin" : "User"}</Text>
+            {isLoading
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Text style={styles.loginButtonText}>Sign In as {role === "admin" ? "Admin" : "User"}</Text>
+            }
           </TouchableOpacity>
 
           <Text style={styles.demoHint}>
             Demo — User: user / user123 · Admin: admin / admin123
           </Text>
+
+          <View style={styles.signupLinkRow}>
+            <Text style={styles.signupLinkText}>Don't have an account? </Text>
+            <TouchableOpacity onPress={onSignup}>
+              <Text style={[styles.signupLinkText, styles.signupLinkAction]}>Sign Up</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <StatusBar style="light" />
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function SignupScreen({ onSignup, onBack, users, isLoading }) {
+  const [role, setRole] = useState("user");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [adminCode, setAdminCode] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const handleSignup = () => {
+    if (!username.trim()) {
+      Alert.alert("Error", "Username is required.");
+      return;
+    }
+    if (username.trim().length < 3) {
+      Alert.alert("Error", "Username must be at least 3 characters.");
+      return;
+    }
+    if (!password) {
+      Alert.alert("Error", "Password is required.");
+      return;
+    }
+    if (password.length < 6) {
+      Alert.alert("Error", "Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      Alert.alert("Error", "Passwords do not match.");
+      return;
+    }
+    if (role === "admin" && adminCode !== ADMIN_INVITE_CODE) {
+      Alert.alert("Error", "Invalid admin invite code.");
+      return;
+    }
+    const exists = users[role].some((u) => u.username === username.trim());
+    if (exists) {
+      Alert.alert("Error", "Username already taken. Please choose another.");
+      return;
+    }
+    onSignup(role, username.trim(), password);
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
+      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <View style={styles.shieldIcon}>
+            <Text style={styles.shieldText}>🛡️</Text>
+          </View>
+          <Text style={styles.appTitle}>WarSafe Network</Text>
+          <Text style={styles.appSubtitle}>Secure Communication Platform</Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Create Account</Text>
+
+          <View style={styles.roleToggleContainer}>
+            <TouchableOpacity
+              style={[styles.roleButton, role === "user" && styles.roleButtonActive]}
+              onPress={() => { setRole("user"); setUsername(""); setPassword(""); setConfirmPassword(""); setAdminCode(""); }}
+            >
+              <Text style={[styles.roleButtonText, role === "user" && styles.roleButtonTextActive]}>
+                User
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.roleButton, role === "admin" && styles.roleButtonActiveAdmin]}
+              onPress={() => { setRole("admin"); setUsername(""); setPassword(""); setConfirmPassword(""); setAdminCode(""); }}
+            >
+              <Text style={[styles.roleButtonText, role === "admin" && styles.roleButtonTextActive]}>
+                Admin
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={[styles.roleBadge, role === "admin" ? styles.roleBadgeAdmin : styles.roleBadgeUser]}>
+            <Text style={styles.roleBadgeText}>
+              {role === "admin" ? "Administrator Account" : "User Account"}
+            </Text>
+          </View>
+
+          <Text style={styles.inputLabel}>Username</Text>
+          <TextInput
+            style={styles.input}
+            placeholder={`Choose a ${role} username`}
+            placeholderTextColor="#9ca3af"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          <Text style={styles.inputLabel}>Password</Text>
+          <View style={styles.passwordContainer}>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Create password (min 6 chars)"
+              placeholderTextColor="#9ca3af"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+            />
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+              <Text style={styles.eyeText}>{showPassword ? "🙈" : "👁️"}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.inputLabel}>Confirm Password</Text>
+          <View style={styles.passwordContainer}>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Re-enter password"
+              placeholderTextColor="#9ca3af"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry={!showConfirm}
+              autoCapitalize="none"
+            />
+            <TouchableOpacity onPress={() => setShowConfirm(!showConfirm)} style={styles.eyeBtn}>
+              <Text style={styles.eyeText}>{showConfirm ? "🙈" : "👁️"}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {role === "admin" && (
+            <>
+              <Text style={styles.inputLabel}>Admin Invite Code</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter admin invite code"
+                placeholderTextColor="#9ca3af"
+                value={adminCode}
+                onChangeText={setAdminCode}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+              <Text style={styles.adminCodeHint}>Contact your administrator for the invite code.</Text>
+            </>
+          )}
+
+          <TouchableOpacity
+            style={[styles.loginButton, role === "admin" ? styles.loginButtonAdmin : styles.loginButtonUser, { marginTop: 8 }, isLoading && styles.buttonDisabled]}
+            onPress={handleSignup}
+            activeOpacity={0.85}
+            disabled={isLoading}
+          >
+            {isLoading
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Text style={styles.loginButtonText}>Sign Up as {role === "admin" ? "Admin" : "User"}</Text>
+            }
+          </TouchableOpacity>
+
+          <View style={styles.signupLinkRow}>
+            <Text style={styles.signupLinkText}>Already have an account? </Text>
+            <TouchableOpacity onPress={onBack}>
+              <Text style={[styles.signupLinkText, styles.signupLinkAction]}>Sign In</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <StatusBar style="light" />
@@ -208,7 +474,7 @@ function MapScreen({ onBack }) {
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.mapTitle}>Zone Map</Text>
+        <Text style={styles.mapTitle}>India Zone Map</Text>
         <View style={{ width: 70 }} />
       </View>
       <WebView
@@ -223,7 +489,7 @@ function MapScreen({ onBack }) {
   );
 }
 
-function DashboardScreen({ role, username, onLogout }) {
+function DashboardScreen({ role, username, sessionData, onLogout }) {
   const isAdmin = role === "admin";
   const [showMap, setShowMap] = useState(false);
 
@@ -239,6 +505,11 @@ function DashboardScreen({ role, username, onLogout }) {
         <View style={styles.dashBadge}>
           <Text style={styles.dashBadgeText}>{isAdmin ? "🔑 Administrator" : "👤 User"}</Text>
         </View>
+        {sessionData && (
+          <Text style={styles.sessionLabel}>
+            🔒 {sessionExpiryLabel(sessionData)}
+          </Text>
+        )}
       </View>
 
       <ScrollView style={styles.dashContent} contentContainerStyle={{ padding: 20 }}>
@@ -277,26 +548,112 @@ function DashboardScreen({ role, username, onLogout }) {
 }
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [users, setUsers] = useState(SEED_USERS);
+  const [screen, setScreen] = useState("login"); // "login" | "signup" | "dashboard"
   const [role, setRole] = useState(null);
   const [username, setUsername] = useState("");
+  const [sessionData, setSessionData] = useState(null);
+  const [appLoading, setAppLoading] = useState(true);
+  const [txLoading, setTxLoading] = useState(false);
 
-  const handleLogin = (r, u) => {
-    setRole(r);
-    setUsername(u);
-    setLoggedIn(true);
+  // On mount: restore persisted session from AsyncStorage
+  useEffect(() => {
+    (async () => {
+      const session = await getSession();
+      if (session) {
+        setRole(session.role);
+        setUsername(session.username);
+        setSessionData(session);
+        setScreen("dashboard");
+      }
+      setAppLoading(false);
+    })();
+  }, []);
+
+  const handleLogin = async (r, u, p) => {
+    setTxLoading(true);
+    try {
+      // Try blockchain validation first
+      const result = await validateLoginOnChain(u, r, p);
+      if (result.onChain) {
+        if (result.success) {
+          const session = await saveSession(u, r);
+          setRole(r);
+          setUsername(u);
+          setSessionData(session);
+          setScreen("dashboard");
+        } else {
+          Alert.alert("Login Failed", "Invalid username or password.");
+        }
+      } else {
+        // Blockchain unavailable — fall back to in-memory seed/registered users
+        const list = users[r];
+        const found = list.find((x) => x.username === u && x.password === p);
+        if (found) {
+          const session = await saveSession(u, r);
+          setRole(r);
+          setUsername(u);
+          setSessionData(session);
+          setScreen("dashboard");
+        } else {
+          Alert.alert("Login Failed", "Invalid username or password.");
+        }
+      }
+    } finally {
+      setTxLoading(false);
+    }
   };
 
-  const handleLogout = () => {
-    setLoggedIn(false);
+  const handleLogout = async () => {
+    await clearSession();
+    setScreen("login");
     setRole(null);
     setUsername("");
+    setSessionData(null);
   };
 
-  if (loggedIn) {
-    return <DashboardScreen role={role} username={username} onLogout={handleLogout} />;
+  const handleSignup = async (r, u, p) => {
+    setTxLoading(true);
+    try {
+      const result = await registerUserOnChain(u, r, p);
+      if (result.success) {
+        // Mirror to in-memory state for instant login-fallback
+        setUsers((prev) => ({
+          ...prev,
+          [r]: [...prev[r], { username: u, password: p }],
+        }));
+        const txShort = result.txHash ? result.txHash.slice(0, 12) + "..." : "";
+        Alert.alert(
+          "Account Created ✅",
+          `Registered on blockchain.\nTx: ${txShort}\n\nPlease sign in.`,
+          [{ text: "Sign In", onPress: () => setScreen("login") }]
+        );
+      } else {
+        Alert.alert("Registration Failed", result.error ?? "Could not register on blockchain.");
+      }
+    } finally {
+      setTxLoading(false);
+    }
+  };
+
+  // Splash screen while restoring (AsyncStorage) session on startup
+  if (appLoading) {
+    return (
+      <View style={styles.splashContainer}>
+        <Text style={styles.splashIcon}>🛡️</Text>
+        <Text style={styles.splashTitle}>WarSafe Network</Text>
+        <ActivityIndicator color="#3b82f6" size="large" style={{ marginTop: 24 }} />
+      </View>
+    );
   }
-  return <LoginScreen onLogin={handleLogin} />;
+
+  if (screen === "dashboard") {
+    return <DashboardScreen role={role} username={username} sessionData={sessionData} onLogout={handleLogout} />;
+  }
+  if (screen === "signup") {
+    return <SignupScreen onSignup={handleSignup} onBack={() => setScreen("login")} users={users} isLoading={txLoading} />;
+  }
+  return <LoginScreen onLogin={handleLogin} onSignup={() => setScreen("signup")} users={users} isLoading={txLoading} />;
 }
 
 const styles = StyleSheet.create({
@@ -444,6 +801,27 @@ const styles = StyleSheet.create({
     color: "#475569",
     fontSize: 11,
     textAlign: "center",
+    marginBottom: 12,
+  },
+  signupLinkRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginTop: 4,
+  },
+  signupLinkText: {
+    color: "#64748b",
+    fontSize: 13,
+  },
+  signupLinkAction: {
+    color: "#3b82f6",
+    fontWeight: "700",
+  },
+  adminCodeHint: {
+    color: "#64748b",
+    fontSize: 11,
+    marginTop: -8,
+    marginBottom: 14,
+    paddingHorizontal: 2,
   },
 
   dashContainer: { flex: 1, backgroundColor: "#f8fafc" },
@@ -523,4 +901,25 @@ const styles = StyleSheet.create({
   },
   backButtonText: { color: "#93c5fd", fontWeight: "600", fontSize: 14 },
   mapTitle: { color: "#f1f5f9", fontWeight: "700", fontSize: 17 },
+  // Blockchain / session styles
+  buttonDisabled: { opacity: 0.55 },
+  sessionLabel: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.65)",
+    marginTop: 6,
+    textAlign: "center",
+  },
+  splashContainer: {
+    flex: 1,
+    backgroundColor: "#0f172a",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  splashIcon: { fontSize: 56 },
+  splashTitle: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#f8fafc",
+    marginTop: 12,
+  },
 });
