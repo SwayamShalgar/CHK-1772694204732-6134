@@ -12,14 +12,13 @@ import {
   View,
 } from "react-native";
 
-// Hardcoded credentials for demo
 const CREDENTIALS = {
   user: { username: "user", password: "user123" },
   admin: { username: "admin", password: "admin123" },
 };
 
 function LoginScreen({ onLogin }) {
-  const [role, setRole] = useState("user"); // "user" | "admin"
+  const [role, setRole] = useState("user");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -39,7 +38,6 @@ function LoginScreen({ onLogin }) {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
-        {/* Header */}
         <View style={styles.header}>
           <View style={styles.shieldIcon}>
             <Text style={styles.shieldText}>🛡️</Text>
@@ -48,18 +46,16 @@ function LoginScreen({ onLogin }) {
           <Text style={styles.appSubtitle}>Secure Communication Platform</Text>
         </View>
 
-        {/* Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Sign In</Text>
 
-          {/* Role Toggle */}
           <View style={styles.roleToggleContainer}>
             <TouchableOpacity
               style={[styles.roleButton, role === "user" && styles.roleButtonActive]}
               onPress={() => { setRole("user"); setUsername(""); setPassword(""); }}
             >
               <Text style={[styles.roleButtonText, role === "user" && styles.roleButtonTextActive]}>
-                👤  User
+                User
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -67,19 +63,17 @@ function LoginScreen({ onLogin }) {
               onPress={() => { setRole("admin"); setUsername(""); setPassword(""); }}
             >
               <Text style={[styles.roleButtonText, role === "admin" && styles.roleButtonTextActive]}>
-                🔑  Admin
+                Admin
               </Text>
             </TouchableOpacity>
           </View>
 
-          {/* Role Badge */}
           <View style={[styles.roleBadge, role === "admin" ? styles.roleBadgeAdmin : styles.roleBadgeUser]}>
             <Text style={styles.roleBadgeText}>
               {role === "admin" ? "Administrator Access" : "User Access"}
             </Text>
           </View>
 
-          {/* Username */}
           <Text style={styles.inputLabel}>Username</Text>
           <TextInput
             style={styles.input}
@@ -91,7 +85,6 @@ function LoginScreen({ onLogin }) {
             autoCorrect={false}
           />
 
-          {/* Password */}
           <Text style={styles.inputLabel}>Password</Text>
           <View style={styles.passwordContainer}>
             <TextInput
@@ -108,7 +101,6 @@ function LoginScreen({ onLogin }) {
             </TouchableOpacity>
           </View>
 
-          {/* Login Button */}
           <TouchableOpacity
             style={[styles.loginButton, role === "admin" ? styles.loginButtonAdmin : styles.loginButtonUser]}
             onPress={handleLogin}
@@ -117,7 +109,6 @@ function LoginScreen({ onLogin }) {
             <Text style={styles.loginButtonText}>Sign In as {role === "admin" ? "Admin" : "User"}</Text>
           </TouchableOpacity>
 
-          {/* Demo hint */}
           <Text style={styles.demoHint}>
             Demo — User: user / user123 · Admin: admin / admin123
           </Text>
@@ -143,7 +134,7 @@ function DashboardScreen({ role, username, onLogout }) {
       </View>
 
       <ScrollView style={styles.dashContent} contentContainerStyle={{ padding: 20 }}>
-        {/* Common tiles */}
+        
         <Text style={styles.sectionTitle}>Quick Access</Text>
         <View style={styles.tileRow}>
           <View style={[styles.tile, { backgroundColor: "#eff6ff" }]}>
@@ -152,7 +143,7 @@ function DashboardScreen({ role, username, onLogout }) {
           </View>
           <View style={[styles.tile, { backgroundColor: "#f0fdf4" }]}>
             <Text style={styles.tileIcon}>🗺️</Text>
-            <Text style={styles.tileLabel}>Safe Zones</Text>
+            <Text style={styles.tileLabel}>Map</Text>
           </View>
         </View>
         <View style={styles.tileRow}>
@@ -166,36 +157,10 @@ function DashboardScreen({ role, username, onLogout }) {
           </View>
         </View>
 
-        {/* Admin-only tiles */}
-        {isAdmin && (
-          <>
-            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Admin Controls</Text>
-            <View style={styles.tileRow}>
-              <View style={[styles.tile, { backgroundColor: "#fef2f2" }]}>
-                <Text style={styles.tileIcon}>👥</Text>
-                <Text style={styles.tileLabel}>Manage Users</Text>
-              </View>
-              <View style={[styles.tile, { backgroundColor: "#f0f9ff" }]}>
-                <Text style={styles.tileIcon}>⚙️</Text>
-                <Text style={styles.tileLabel}>Settings</Text>
-              </View>
-            </View>
-            <View style={styles.tileRow}>
-              <View style={[styles.tile, { backgroundColor: "#fefce8" }]}>
-                <Text style={styles.tileIcon}>📊</Text>
-                <Text style={styles.tileLabel}>Analytics</Text>
-              </View>
-              <View style={[styles.tile, { backgroundColor: "#f0fdf4" }]}>
-                <Text style={styles.tileIcon}>🛠️</Text>
-                <Text style={styles.tileLabel}>System Logs</Text>
-              </View>
-            </View>
-          </>
-        )}
       </ScrollView>
 
       <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-        <Text style={styles.logoutText}>🚪  Sign Out</Text>
+        <Text style={styles.logoutText}>Sign Out</Text>
       </TouchableOpacity>
 
       <StatusBar style="light" />
@@ -227,7 +192,6 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  /* ── Login ── */
   scrollContainer: {
     flexGrow: 1,
     backgroundColor: "#0f172a",
@@ -374,7 +338,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
-  /* ── Dashboard ── */
   dashContainer: { flex: 1, backgroundColor: "#f8fafc" },
   dashHeader: {
     paddingTop: Platform.OS === "android" ? 40 : 60,
