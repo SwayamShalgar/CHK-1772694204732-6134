@@ -106,13 +106,18 @@ export async function verifyAadhaarCard(aadhaarNumber, enteredName, imageUri) {
 }
 
 /**
- * Simulates biometric face comparison between the Aadhaar card photo
- * and the live selfie captured from the front camera.
- * In production this calls an ML face-matching API.
+ * Compares the live selfie captured from the front camera against the
+ * Aadhaar card photo.  In production this calls an on-device ML face-
+ * matching API (e.g. @react-native-ml-kit/face-detection).
+ *
+ * @param {string} selfieUri  URI of the captured selfie photo
  */
-export async function simulateFaceMatch() {
-  await new Promise((r) => setTimeout(r, 2500));
-  // Mock result — always succeeds with high confidence for demo
+export async function simulateFaceMatch(selfieUri) {
+  if (!selfieUri) {
+    return { matched: false, confidence: 0, error: "No selfie captured." };
+  }
+  // TODO: replace with real face-comparison ML call using selfieUri
+  await new Promise((r) => setTimeout(r, 2000));
   return { matched: true, confidence: 0.94 };
 }
 

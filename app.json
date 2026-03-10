@@ -25,7 +25,9 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
       ]
     },
     "plugins": [
@@ -40,8 +42,12 @@
         {
           "photosPermission": "WarSafe needs photo library access to upload your Aadhaar card image.",
           "cameraPermission": "WarSafe needs camera access to photograph your Aadhaar card."
-        }
-      ]
+        }      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "WarSafe uses your location to find the nearest safehouse and calculate the safest route."
+        }      ]
     ],
     "web": {
       "favicon": "./assets/favicon.png"

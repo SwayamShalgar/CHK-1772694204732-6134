@@ -2,6 +2,7 @@ import { BleManager } from "react-native-ble-plx";
 import TcpSocket from "react-native-tcp-socket";
 import NetInfo from "@react-native-community/netinfo";
 import { saveMessage, MESSAGE_PRIORITIES } from "../utils/offlineMessages";
+import { saveCustomZones } from "../utils/zoneStorage";
 
 export const WARSAFE_SERVICE_UUID = "0000CAFE-0000-1000-8000-00805F9B34FB";
 export const WARSAFE_TCP_PORT = 57321;
@@ -11,6 +12,7 @@ let _tcpServer = null;
 let _tcpClients = [];        
 let _tcpClientSocket = null; 
 let _onMessageCallback = null;
+let _zoneUpdateCallback = null;
 let _bleSubscription = null;
 let _nearbyDevices = [];
 
@@ -262,6 +264,22 @@ export function stopAdminServer() {
   _tcpClients = [];
 }
 
+/** Push the full zones array to every connected client. */
+export function broadcastZones(zones) {
+  if (_tcpClients.length === 0) return 0;
+  const payload = JSON.stringify({ type: "zone_update", zones }) + "\n";
+  let sent = 0;
+  for (const client of _tcpClients) {
+    try { client.write(payload); sent++; } catch {}
+  }
+  return sent;
+}
+
+/** Register a callback to be called when a zone_update is received from admin. */
+export function setZoneUpdateCallback(cb) {
+  _zoneUpdateCallback = cb;
+}
+
 export function getConnectedClientCount() {
   return _tcpClients.length;
 }
@@ -310,9 +328,14 @@ export function connectToAdmin(adminIP, currentUsername, onMessage, onStatus, ti
         if (!line.trim()) continue;
         try {
           const msg = JSON.parse(line);
-
-          await saveMessage(msg.from, msg.content, msg.priority);
-          _onMessageCallback?.(msg);
+          if (msg.type === "zone_update") {
+            // Admin pushed updated zone list — persist and notify MapScreen
+            await saveCustomZones(msg.zones || []);
+            _zoneUpdateCallback?.(msg.zones || []);
+          } else {
+            await saveMessage(msg.from, msg.content, msg.priority);
+            _onMessageCallback?.(msg);
+          }
         } catch (e) {
           console.warn("[TCP Client] bad payload:", line);
         }

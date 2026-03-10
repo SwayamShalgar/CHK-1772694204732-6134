@@ -1,9 +1,11 @@
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { WebView } from "react-native-webview";
 import AdminBroadcastScreen from "./src/screens/AdminBroadcastScreen";
+import AdminZoneScreen from "./src/screens/AdminZoneScreen";
 import MessagesScreen from "./src/screens/MessagesScreen";
-import { tearDownAll } from "./src/bluetooth/bluetoothService";
+import { getCustomZones } from "./src/utils/zoneStorage";
+import { tearDownAll, setZoneUpdateCallback } from "./src/bluetooth/bluetoothService";
 import {
   getUnreadCount,
 } from "./src/utils/offlineMessages";
@@ -32,6 +34,7 @@ import {
   sessionExpiryLabel,
 } from "./src/utils/sessionManager";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Location from "expo-location";
 import {
   verifyAadhaarCard,
   simulateFaceMatch,
@@ -190,6 +193,206 @@ const LEAFLET_HTML = `
       return div;
     };
     legend.addTo(map);
+
+    /* ── CUSTOM ZONES: injected at runtime by React Native ── */
+    window.loadCustomZones = function(zones) {
+      var CSTYLES = {
+        red:    { color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.45, weight: 2 },
+        yellow: { color: '#d97706', fillColor: '#fbbf24', fillOpacity: 0.45, weight: 2 },
+        green:  { color: '#16a34a', fillColor: '#4ade80', fillOpacity: 0.4,  weight: 2 }
+      };
+      var CLABELS = {
+        red:    '<b style="color:#dc2626">\u26a0\ufe0f Custom Danger Zone<\/b>',
+        yellow: '<b style="color:#d97706">\u26a1 Custom Caution Zone<\/b>',
+        green:  '<b style="color:#16a34a">\u2705 Custom Safe Zone<\/b>'
+      };
+      (zones || []).forEach(function(z) {
+        var s = CSTYLES[z.type] || CSTYLES.green;
+        L.circle([z.lat, z.lng], Object.assign({}, s, { radius: z.radiusKm * 1000 }))
+          .addTo(map)
+          .bindPopup((CLABELS[z.type] || '') + '<br>' + (z.label || ''));
+      });
+    };
+
+    /* ── A* PATHFINDING: Shortest safe route to nearest safehouse ──
+       Grid resolution : 0.75° (~83 km per cell)
+       Zone penalties  : Red ×8  |  Yellow ×2.5  |  Green ×0.6  |  Open ×1
+       Algorithm       : A* with Haversine heuristic, 8-directional movement
+    ─────────────────────────────────────────────────────────────────── */
+    window.findSafestRoute = (function() {
+      var STEP = 0.75;
+      var LAT0 = 6.5,  LAT1 = 37.5;
+      var LNG0 = 68.0, LNG1 = 98.0;
+      var ROWS = Math.ceil((LAT1 - LAT0) / STEP) + 1;
+      var COLS = Math.ceil((LNG1 - LNG0) / STEP) + 1;
+
+      /* encode (row, col) as a single integer key */
+      function nk(r, c)  { return r * 200 + c; }
+      function r2(k)     { return Math.floor(k / 200); }
+      function c2(k)     { return k % 200; }
+      function rc2ll(r, c) { return [LAT0 + r * STEP, LNG0 + c * STEP]; }
+      function ll2rc(lat, lng) {
+        return [
+          Math.min(ROWS-1, Math.max(0, Math.round((lat - LAT0) / STEP))),
+          Math.min(COLS-1, Math.max(0, Math.round((lng - LNG0) / STEP)))
+        ];
+      }
+
+      /* Haversine great-circle distance (km) */
+      function hav(la1, ln1, la2, ln2) {
+        var R = 6371, dLa = (la2-la1)*Math.PI/180, dLn = (ln2-ln1)*Math.PI/180;
+        var a = Math.sin(dLa/2)*Math.sin(dLa/2) +
+                Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*
+                Math.sin(dLn/2)*Math.sin(dLn/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      }
+
+      /* Zone-based traversal penalty for a lat/lng point */
+      function zonePenalty(lat, lng) {
+        var p = 1.0, i, z, d;
+        for (i = 0; i < redZones.length; i++) {
+          z = redZones[i];
+          d = hav(lat, lng, z.center[0], z.center[1]) * 1000;
+          if (d < z.radius) { p = Math.max(p, 8.0); }
+        }
+        for (i = 0; i < yellowZones.length; i++) {
+          z = yellowZones[i];
+          d = hav(lat, lng, z.center[0], z.center[1]) * 1000;
+          if (d < z.radius) { p = Math.max(p, 2.5); }
+        }
+        for (i = 0; i < greenZones.length; i++) {
+          z = greenZones[i];
+          d = hav(lat, lng, z.center[0], z.center[1]) * 1000;
+          if (d < z.radius) { p = Math.min(p, 0.6); }
+        }
+        return p;
+      }
+
+      /* Pre-compute penalty for every grid cell once at startup */
+      var PEN = {};
+      (function() {
+        for (var r = 0; r < ROWS; r++) {
+          for (var c = 0; c < COLS; c++) {
+            var ll = rc2ll(r, c);
+            PEN[nk(r, c)] = zonePenalty(ll[0], ll[1]);
+          }
+        }
+      })();
+
+      /* 8-directional movement offsets */
+      var DIRS = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+
+      /* A* search from (sLat,sLng) to (eLat,eLng).  Returns [[lat,lng], ...] or null. */
+      function aStar(sLat, sLng, eLat, eLng) {
+        var sRC = ll2rc(sLat, sLng);
+        var eRC = ll2rc(eLat, eLng);
+        var sk  = nk(sRC[0], sRC[1]);
+        var ek  = nk(eRC[0], eRC[1]);
+        var eLL = rc2ll(eRC[0], eRC[1]);
+
+        if (sk === ek) return [rc2ll(sRC[0], sRC[1]), eLL];
+
+        var gScore = {}; gScore[sk] = 0;
+        var parent = {};
+        var closed = {};
+        var open = [{ k: sk, r: sRC[0], c: sRC[1], f: hav(sLat, sLng, eLL[0], eLL[1]) }];
+
+        for (var iter = 0; iter < 4000 && open.length > 0; iter++) {
+          /* pop node with lowest f-score */
+          open.sort(function(a,b) { return a.f - b.f; });
+          var cur = open.shift();
+          var ck  = cur.k;
+          if (ck === ek) {
+            /* reconstruct */
+            var path = [], k = ek;
+            while (k !== undefined) { path.push(rc2ll(r2(k), c2(k))); k = parent[k]; }
+            return path.reverse();
+          }
+          if (closed[ck]) continue;
+          closed[ck] = true;
+
+          for (var d = 0; d < 8; d++) {
+            var nr = cur.r + DIRS[d][0];
+            var nc = cur.c + DIRS[d][1];
+            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+            var nkk = nk(nr, nc);
+            if (closed[nkk]) continue;
+            var nLL  = rc2ll(nr, nc);
+            var cLL  = rc2ll(cur.r, cur.c);
+            var pen  = PEN[nkk] !== undefined ? PEN[nkk] : 1.0;
+            var tg   = gScore[ck] + hav(cLL[0], cLL[1], nLL[0], nLL[1]) * pen;
+            if (gScore[nkk] === undefined || tg < gScore[nkk]) {
+              gScore[nkk] = tg;
+              parent[nkk] = ck;
+              open.push({ k: nkk, r: nr, c: nc, f: tg + hav(nLL[0], nLL[1], eLL[0], eLL[1]) });
+            }
+          }
+        }
+        return null; /* no path within iteration budget */
+      }
+
+      /* Clear previous route layers */
+      function clearRoute() {
+        if (window._routeLayer)  { map.removeLayer(window._routeLayer);  window._routeLayer  = null; }
+        if (window._userMarker)  { map.removeLayer(window._userMarker);  window._userMarker  = null; }
+        if (window._destMarker)  { map.removeLayer(window._destMarker);  window._destMarker  = null; }
+        if (window._routeArrows) { map.removeLayer(window._routeArrows); window._routeArrows = null; }
+      }
+
+      /* Public entry-point: find safest route from userLat/userLng */
+      return function findSafestRoute(userLat, userLng) {
+        clearRoute();
+
+        /* Place user marker */
+        window._userMarker = L.circleMarker([userLat, userLng], {
+          radius: 10, color: '#fff', weight: 2.5, fillColor: '#3b82f6', fillOpacity: 1
+        }).addTo(map).bindPopup('<b>\uD83D\uDCCD Your Location</b>').openPopup();
+
+        /* Run A* to every safehouse, keep the cheapest route */
+        var bestCost = Infinity, bestPath = null, bestHouse = null;
+        for (var i = 0; i < safehouses.length; i++) {
+          var sh   = safehouses[i];
+          var path = aStar(userLat, userLng, sh.pos[0], sh.pos[1]);
+          if (!path || path.length < 2) continue;
+          var cost = 0;
+          for (var j = 1; j < path.length; j++) {
+            cost += hav(path[j-1][0], path[j-1][1], path[j][0], path[j][1]);
+          }
+          if (cost < bestCost) { bestCost = cost; bestPath = path; bestHouse = sh; }
+        }
+
+        if (!bestPath) {
+          if (window.ReactNativeWebView)
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'routeError' }));
+          return;
+        }
+
+        /* Draw route polyline */
+        window._routeLayer = L.polyline(bestPath, {
+          color: '#22c55e', weight: 5, opacity: 0.92, lineJoin: 'round'
+        }).addTo(map);
+
+        /* Destination safehouse marker with special popup */
+        window._destMarker = L.marker(bestHouse.pos, { icon: safehouseIcon })
+          .addTo(map)
+          .bindPopup(
+            '<b style="color:#16a34a">\uD83C\uDFC1 Nearest Safehouse</b><br>' +
+            '<b>' + bestHouse.name + '</b><br>City: ' + bestHouse.city + '<br>' +
+            '<span style="color:#16a34a;font-weight:600">~' + Math.round(bestCost) + ' km (safe route)<\/span>'
+          ).openPopup();
+
+        map.fitBounds(window._routeLayer.getBounds(), { padding: [50, 50] });
+
+        /* Notify React Native */
+        if (window.ReactNativeWebView)
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'routeResult',
+            safehouse: bestHouse.name,
+            city: bestHouse.city,
+            distanceKm: Math.round(bestCost)
+          }));
+      };
+    })();
   <\/script>
 </body>
 </html>
@@ -326,19 +529,20 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
 
   // ── Step 2 state ──────────────────────────────────────────────────
   const [permission, requestPermission] = useCameraPermissions();
+  const [cameraReady, setCameraReady] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
   const [faceScanned, setFaceScanned] = useState(false);
   const [scanning, setScanning] = useState(false);
   const cameraRef = useRef(null);
   const detectTimerRef = useRef(null);
 
-  // Auto-detect face 2 s after camera opens
+  // Start face-detection timer once the camera hardware is ready
   useEffect(() => {
-    if (step === 2 && permission?.granted && !faceScanned) {
+    if (step === 2 && cameraReady && !faceScanned && !faceDetected) {
       detectTimerRef.current = setTimeout(() => setFaceDetected(true), 2000);
     }
     return () => clearTimeout(detectTimerRef.current);
-  }, [step, permission?.granted]);
+  }, [step, cameraReady, faceScanned, faceDetected]);
 
   // ── Step 3 state ──────────────────────────────────────────────────
   const [role, setRole] = useState("user");
@@ -423,17 +627,27 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
       Alert.alert("Face Not Ready", "Hold your face steady in the frame and wait for the green outline.");
       return;
     }
+    if (!cameraRef.current) {
+      Alert.alert("Camera Not Ready", "Camera is still initialising. Please wait a moment and try again.");
+      return;
+    }
     setScanning(true);
-    const result = await simulateFaceMatch();
-    setScanning(false);
-    if (result.matched) {
-      setFaceScanned(true);
-      setTimeout(() => setStep(3), 1200);
-    } else {
-      Alert.alert(
-        "Face Mismatch ❌",
-        "Your face does not match the photo on the Aadhaar card. Please ensure you are holding up the correct card and try again."
-      );
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.7, skipProcessing: false });
+      const result = await simulateFaceMatch(photo?.uri);
+      if (result.matched) {
+        setFaceScanned(true);
+        setTimeout(() => setStep(3), 1200);
+      } else {
+        Alert.alert(
+          "Face Mismatch ❌",
+          "Your face does not match the photo on the Aadhaar card. Please ensure you are holding up the correct card and try again."
+        );
+      }
+    } catch (e) {
+      Alert.alert("Capture Failed", "Could not take a photo. Please ensure camera permission is granted and try again.");
+    } finally {
+      setScanning(false);
     }
   };
 
@@ -654,7 +868,12 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
 
             {/* Front camera for selfie */}
             <View style={styles.cameraContainer}>
-              <CameraView ref={cameraRef} style={styles.camera} facing="front" />
+              <CameraView
+                ref={cameraRef}
+                style={styles.camera}
+                facing="front"
+                onCameraReady={() => setCameraReady(true)}
+              />
               <View style={styles.cameraOverlay} pointerEvents="none">
                 <View style={[styles.faceBox, faceDetected && styles.faceBoxDetected]} />
                 <Text style={styles.faceBoxHint}>
@@ -699,7 +918,7 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity style={{ marginTop: 14, alignSelf: "center" }} onPress={() => { setFaceDetected(false); setFaceScanned(false); setStep(1); }}>
+            <TouchableOpacity style={{ marginTop: 14, alignSelf: "center" }} onPress={() => { setFaceDetected(false); setFaceScanned(false); setCameraReady(false); setStep(1); }}>
               <Text style={[styles.signupLinkText, styles.signupLinkAction]}>← Back</Text>
             </TouchableOpacity>
           </View>
@@ -847,6 +1066,80 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
 
 
 function MapScreen({ onBack }) {
+  const webviewRef   = useRef(null);
+  const mapLoadedRef = useRef(false);
+  const locationRef  = useRef(null);  // cached GPS coords
+
+  const [locStatus,  setLocStatus]  = useState("idle");  // idle|locating|ready|denied
+  const [routeInfo,  setRouteInfo]  = useState(null);    // { safehouse, city, distanceKm }
+
+  /* Inject (or refresh) custom admin zones */
+  const injectCustomZones = useCallback(async (zones) => {
+    const z = zones != null ? zones : await getCustomZones();
+    if (mapLoadedRef.current && webviewRef.current) {
+      webviewRef.current.injectJavaScript(
+        `window.loadCustomZones(${JSON.stringify(z)});true;`
+      );
+    }
+  }, []);
+
+  /* Inject GPS coords → A* runs in the WebView */
+  const injectRoute = useCallback((coords) => {
+    if (!mapLoadedRef.current || !webviewRef.current || !coords) return;
+    webviewRef.current.injectJavaScript(
+      `window.findSafestRoute(${coords.latitude}, ${coords.longitude});true;`
+    );
+  }, []);
+
+  /* Request location permission, get fix, trigger route */
+  const requestAndLocate = useCallback(async () => {
+    setLocStatus("locating");
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") {
+      setLocStatus("denied");
+      Alert.alert(
+        "Location Required",
+        "Enable location permission in Settings so WarSafe can find the nearest safehouse."
+      );
+      return;
+    }
+    try {
+      const fix = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      locationRef.current = fix.coords;
+      setLocStatus("ready");
+      injectRoute(fix.coords);
+    } catch {
+      setLocStatus("idle");
+      Alert.alert("GPS Error", "Could not get your location. Please ensure GPS is switched on.");
+    }
+  }, [injectRoute]);
+
+  /* Live zone updates from admin over TCP */
+  useEffect(() => {
+    setZoneUpdateCallback((zones) => injectCustomZones(zones));
+    return () => setZoneUpdateCallback(null);
+  }, [injectCustomZones]);
+
+  /* After the WebView / Leaflet is ready */
+  const handleLoad = useCallback(() => {
+    setTimeout(async () => {
+      mapLoadedRef.current = true;
+      await injectCustomZones();
+      if (locationRef.current) injectRoute(locationRef.current);
+    }, 600);
+  }, [injectCustomZones, injectRoute]);
+
+  /* Handle messages from the WebView (route results) */
+  const handleMessage = useCallback((event) => {
+    try {
+      const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === "routeResult") setRouteInfo(msg);
+      if (msg.type === "routeError")  Alert.alert("No Route", "Could not find a safe route to any safehouse.");
+    } catch {}
+  }, []);
+
   return (
     <View style={{ flex: 1, backgroundColor: "#0f172a" }}>
       <View style={styles.mapHeader}>
@@ -854,15 +1147,46 @@ function MapScreen({ onBack }) {
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.mapTitle}>India Zone Map</Text>
-        <View style={{ width: 70 }} />
+        <TouchableOpacity
+          style={[styles.backButton, locStatus === "locating" && { opacity: 0.55 }]}
+          onPress={locStatus !== "locating" ? requestAndLocate : undefined}
+          disabled={locStatus === "locating"}
+        >
+          {locStatus === "locating"
+            ? <ActivityIndicator color="#93c5fd" size="small" />
+            : <Text style={styles.backButtonText}>
+                {locStatus === "ready" ? "⟳ Route" : "📍 Route"}
+              </Text>
+          }
+        </TouchableOpacity>
       </View>
+
+      {/* Route result banner */}
+      {routeInfo && (
+        <View style={styles.routeBanner}>
+          <Text style={styles.routeBannerIcon}>🏁</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.routeBannerTitle}>{routeInfo.safehouse}</Text>
+            <Text style={styles.routeBannerSub}>
+              Nearest safe route · ~{routeInfo.distanceKm} km
+            </Text>
+          </View>
+          <TouchableOpacity onPress={() => setRouteInfo(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={{ color: "#94a3b8", fontSize: 18, paddingHorizontal: 6 }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <WebView
+        ref={webviewRef}
         source={{ html: LEAFLET_HTML }}
         style={{ flex: 1 }}
         originWhitelist={["*"]}
         javaScriptEnabled
         domStorageEnabled
         startInLoadingState
+        onLoad={handleLoad}
+        onMessage={handleMessage}
       />
     </View>
   );
@@ -872,6 +1196,7 @@ function DashboardScreen({ role, username, sessionData, onLogout }) {
   const isAdmin = role === "admin";
   const [showMap, setShowMap] = useState(false);
   const [showMessages, setShowMessages] = useState(false);
+  const [showZoneManager, setShowZoneManager] = useState(false);
   const [unread, setUnread] = useState(0);
 
   useEffect(() => {
@@ -904,6 +1229,10 @@ function DashboardScreen({ role, username, sessionData, onLogout }) {
         onBack={() => setShowMessages(false)}
       />
     );
+  }
+
+  if (showZoneManager && isAdmin) {
+    return <AdminZoneScreen onBack={() => setShowZoneManager(false)} />;
   }
 
   return (
@@ -957,6 +1286,19 @@ function DashboardScreen({ role, username, sessionData, onLogout }) {
             )}
           </TouchableOpacity>
         </View>
+
+        {isAdmin && (
+          <View style={styles.tileRow}>
+            <TouchableOpacity
+              style={[styles.tile, { backgroundColor: "#f5f3ff" }]}
+              onPress={() => setShowZoneManager(true)}
+            >
+              <Text style={styles.tileIcon}>🗺️</Text>
+              <Text style={styles.tileLabel}>Zone Manager</Text>
+              <Text style={styles.tileSubLabel}>Set danger / caution / safe zones</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
       </ScrollView>
 
@@ -1552,5 +1894,26 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#f8fafc",
     marginTop: 12,
+  },
+  routeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#052e16",
+    borderBottomWidth: 1,
+    borderBottomColor: "#16a34a",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  routeBannerIcon: { fontSize: 22 },
+  routeBannerTitle: {
+    color: "#86efac",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  routeBannerSub: {
+    color: "#4ade80",
+    fontSize: 12,
+    marginTop: 1,
   },
 });
