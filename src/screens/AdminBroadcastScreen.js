@@ -291,7 +291,7 @@ export default function AdminBroadcastScreen({ username, onBack }) {
           sentMessages.map((msg) => {
             const m = priorityMeta(msg.priority);
             return (
-              <View key={msg.id} style={[styles.msgCard, { borderLeftColor: m.color, backgroundColor: m.bg }]}>
+              <View key={msg.id} style={[styles.msgCard, { borderLeftColor: m.color }]}>
                 <View style={styles.msgCardHeader}>
                   <View style={[styles.priorityBadge, { backgroundColor: m.color }]}>
                     <Text style={styles.priorityBadgeText}>{m.icon} {m.label}</Text>
@@ -311,42 +311,41 @@ export default function AdminBroadcastScreen({ username, onBack }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f8fafc" },
+  container: { flex: 1, backgroundColor: "#0f172a" },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#6d28d9",
+    backgroundColor: "#1e293b",
     paddingTop: Platform.OS === "android" ? 40 : 56,
     paddingBottom: 14,
     paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
   },
   backBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "#334155",
     borderRadius: 8,
     minWidth: 70,
     alignItems: "center",
   },
-  backBtnText: { color: "#e9d5ff", fontWeight: "600", fontSize: 14 },
+  backBtnText: { color: "#93c5fd", fontWeight: "600", fontSize: 14 },
   headerTitle: { color: "#fff", fontWeight: "800", fontSize: 18 },
 
   scroll: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 32 },
 
   card: {
-    backgroundColor: "#fff",
+    backgroundColor: "#1e293b",
     borderRadius: 16,
     padding: 18,
     marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#334155",
   },
-  cardTitle: { fontSize: 16, fontWeight: "700", color: "#1e293b", marginBottom: 6 },
+  cardTitle: { fontSize: 16, fontWeight: "700", color: "#f1f5f9", marginBottom: 6 },
   cardSubtitle: { fontSize: 12, color: "#64748b", marginBottom: 14, lineHeight: 18 },
 
   serverBtn: {
@@ -360,24 +359,24 @@ const styles = StyleSheet.create({
   serverBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
 
   serverInfoBox: {
-    backgroundColor: "#f0fdf4",
+    backgroundColor: "#0a2e1a",
     borderRadius: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#bbf7d0",
+    borderColor: "#15803d",
   },
-  serverInfoLabel: { fontSize: 11, color: "#166534", fontWeight: "600", marginBottom: 6 },
-  hotspotHint: { fontSize: 11, color: "#166534", marginBottom: 6 },
+  serverInfoLabel: { fontSize: 11, color: "#4ade80", fontWeight: "600", marginBottom: 6 },
+  hotspotHint: { fontSize: 11, color: "#86efac", marginBottom: 6 },
   ipRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-  ipText: { fontSize: 17, fontWeight: "800", color: "#15803d", fontFamily: Platform.OS === "android" ? "monospace" : "Courier" },
-  ipCopyHint: { fontSize: 11, color: "#16a34a" },
+  ipText: { fontSize: 17, fontWeight: "800", color: "#4ade80", fontFamily: Platform.OS === "android" ? "monospace" : "Courier" },
+  ipCopyHint: { fontSize: 11, color: "#22c55e" },
   connectedRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  dotActive: { backgroundColor: "#16a34a" },
-  dotIdle: { backgroundColor: "#94a3b8" },
-  connectedText: { fontSize: 12, color: "#475569" },
+  dotActive: { backgroundColor: "#22c55e" },
+  dotIdle: { backgroundColor: "#475569" },
+  connectedText: { fontSize: 12, color: "#94a3b8" },
 
-  inputLabel: { fontSize: 12, fontWeight: "600", color: "#64748b", marginBottom: 8, marginTop: 4 },
+  inputLabel: { fontSize: 12, fontWeight: "600", color: "#94a3b8", marginBottom: 8, marginTop: 4 },
 
   priorityRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 },
   priorityBtn: {
@@ -388,23 +387,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 8,
     borderWidth: 1.5,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#f8fafc",
+    borderColor: "#334155",
+    backgroundColor: "#0f172a",
   },
   priorityBtnIcon: { fontSize: 14 },
-  priorityBtnLabel: { fontSize: 12, fontWeight: "600", color: "#475569" },
+  priorityBtnLabel: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
 
   textArea: {
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0f172a",
     borderWidth: 1.5,
     borderRadius: 12,
     padding: 12,
     fontSize: 15,
-    color: "#1e293b",
+    color: "#f1f5f9",
     minHeight: 100,
     marginBottom: 4,
   },
-  charCount: { fontSize: 11, color: "#94a3b8", textAlign: "right", marginBottom: 14 },
+  charCount: { fontSize: 11, color: "#475569", textAlign: "right", marginBottom: 14 },
 
   broadcastBtn: {
     borderRadius: 12,
@@ -420,28 +419,29 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginTop: 4,
   },
-  sectionTitle: { fontSize: 13, fontWeight: "700", color: "#64748b", textTransform: "uppercase", letterSpacing: 0.8 },
+  sectionTitle: { fontSize: 11, fontWeight: "700", color: "#475569", textTransform: "uppercase", letterSpacing: 0.8 },
   clearAllText: { fontSize: 13, color: "#ef4444", fontWeight: "600" },
 
   emptyState: { alignItems: "center", paddingVertical: 32 },
   emptyStateIcon: { fontSize: 40, marginBottom: 8 },
-  emptyStateText: { fontSize: 14, color: "#94a3b8" },
+  emptyStateText: { fontSize: 14, color: "#475569" },
 
   msgCard: {
-    backgroundColor: "#fff",
+    backgroundColor: "#1e293b",
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
     borderLeftWidth: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
+    borderTopWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderTopColor: "#334155",
+    borderRightColor: "#334155",
+    borderBottomColor: "#334155",
   },
   msgCardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
   priorityBadge: { borderRadius: 6, paddingVertical: 2, paddingHorizontal: 8 },
   priorityBadgeText: { color: "#fff", fontSize: 11, fontWeight: "700" },
-  msgTimestamp: { fontSize: 11, color: "#94a3b8" },
-  msgContent: { fontSize: 14, color: "#1e293b", lineHeight: 20 },
+  msgTimestamp: { fontSize: 11, color: "#475569" },
+  msgContent: { fontSize: 14, color: "#e2e8f0", lineHeight: 20 },
 });

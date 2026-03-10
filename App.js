@@ -1250,54 +1250,54 @@ function DashboardScreen({ role, username, sessionData, onLogout }) {
         )}
       </View>
 
-      <ScrollView style={styles.dashContent} contentContainerStyle={{ padding: 20 }}>
+      <ScrollView style={styles.dashContent} contentContainerStyle={{ padding: 20, paddingBottom: 12 }}>
 
-        <Text style={styles.sectionTitle}>Quick Access</Text>
-        <View style={styles.tileRow}>
-          <View style={[styles.tile, { backgroundColor: "#eff6ff" }]}>
-            <Text style={styles.tileIcon}>📡</Text>
-            <Text style={styles.tileLabel}>Network Status</Text>
+        <Text style={styles.sectionTitle}>Actions</Text>
+
+        <TouchableOpacity style={styles.actionCard} onPress={() => setShowMap(true)}>
+          <View style={[styles.actionIconBox, { backgroundColor: "#0c3055" }]}>
+            <Text style={styles.actionIcon}>🗺️</Text>
           </View>
-          <TouchableOpacity style={[styles.tile, { backgroundColor: "#f0fdf4" }]} onPress={() => setShowMap(true)}>
-            <Text style={styles.tileIcon}>🗺️</Text>
-            <Text style={styles.tileLabel}>Map</Text>
-          </TouchableOpacity>
-        </View>
-        <View style={styles.tileRow}>
-          <View style={[styles.tile, { backgroundColor: "#fff7ed" }]}>
-            <Text style={styles.tileIcon}>📢</Text>
-            <Text style={styles.tileLabel}>Alerts</Text>
+          <View style={styles.actionInfo}>
+            <Text style={styles.actionLabel}>Zone Map</Text>
+            <Text style={styles.actionDesc}>View danger, caution & safe zones · find nearest safehouse</Text>
           </View>
-          <TouchableOpacity style={[styles.tile, { backgroundColor: "#fdf4ff" }]} onPress={() => setShowMessages(true)}>
-            <View style={{ position: "relative", alignItems: "center" }}>
-              <Text style={styles.tileIcon}>💬</Text>
-              {!isAdmin && unread > 0 && (
-                <View style={styles.unreadBadge}>
-                  <Text style={styles.unreadBadgeText}>{unread > 99 ? "99+" : unread}</Text>
-                </View>
-              )}
+          <Text style={styles.actionChevron}>›</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.actionCard} onPress={() => setShowMessages(true)}>
+          <View style={[styles.actionIconBox, { backgroundColor: isAdmin ? "#3b1f6e" : "#0c3055" }]}>
+            <Text style={styles.actionIcon}>{isAdmin ? "📢" : "💬"}</Text>
+          </View>
+          <View style={styles.actionInfo}>
+            <Text style={styles.actionLabel}>{isAdmin ? "Broadcast" : "Messages"}</Text>
+            <Text style={styles.actionDesc}>
+              {isAdmin
+                ? "Send emergency alerts to all connected users"
+                : unread > 0
+                ? `${unread} unread message${unread > 1 ? "s" : ""}`
+                : "Receive admin alerts & advisories"}
+            </Text>
+          </View>
+          {!isAdmin && unread > 0 && (
+            <View style={styles.unreadBadge}>
+              <Text style={styles.unreadBadgeText}>{unread > 99 ? "99+" : unread}</Text>
             </View>
-            <Text style={styles.tileLabel}>{isAdmin ? "Broadcast" : "Messages"}</Text>
-            {isAdmin && (
-              <Text style={styles.tileSubLabel}>Send alerts</Text>
-            )}
-            {!isAdmin && unread > 0 && (
-              <Text style={[styles.tileSubLabel, { color: "#2563eb" }]}>{unread} unread</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+          )}
+          <Text style={styles.actionChevron}>›</Text>
+        </TouchableOpacity>
 
         {isAdmin && (
-          <View style={styles.tileRow}>
-            <TouchableOpacity
-              style={[styles.tile, { backgroundColor: "#f5f3ff" }]}
-              onPress={() => setShowZoneManager(true)}
-            >
-              <Text style={styles.tileIcon}>🗺️</Text>
-              <Text style={styles.tileLabel}>Zone Manager</Text>
-              <Text style={styles.tileSubLabel}>Set danger / caution / safe zones</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.actionCard} onPress={() => setShowZoneManager(true)}>
+            <View style={[styles.actionIconBox, { backgroundColor: "#2d1a00" }]}>
+              <Text style={styles.actionIcon}>📍</Text>
+            </View>
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionLabel}>Zone Manager</Text>
+              <Text style={styles.actionDesc}>Create & broadcast danger · caution · safe zones</Text>
+            </View>
+            <Text style={styles.actionChevron}>›</Text>
+          </TouchableOpacity>
         )}
 
       </ScrollView>
@@ -1783,7 +1783,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  dashContainer: { flex: 1, backgroundColor: "#f8fafc" },
+  dashContainer: { flex: 1, backgroundColor: "#0f172a" },
   dashHeader: {
     paddingTop: Platform.OS === "android" ? 40 : 60,
     paddingBottom: 28,
@@ -1804,50 +1804,52 @@ const styles = StyleSheet.create({
   dashBadgeText: { color: "#fff", fontSize: 13, fontWeight: "600" },
   dashContent: { flex: 1 },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: "700",
-    color: "#64748b",
+    color: "#475569",
     textTransform: "uppercase",
     letterSpacing: 1,
     marginBottom: 12,
   },
-  tileRow: {
+  actionCard: {
     flexDirection: "row",
-    gap: 12,
-    marginBottom: 12,
-  },
-  tile: {
-    flex: 1,
-    borderRadius: 16,
-    padding: 18,
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 3,
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#334155",
+    gap: 14,
   },
-  tileIcon: { fontSize: 28, marginBottom: 8 },
-  tileLabel: { fontSize: 13, fontWeight: "600", color: "#374151", textAlign: "center" },
-  tileSubLabel: { fontSize: 10, color: "#94a3b8", marginTop: 2, textAlign: "center" },
-  unreadBadge: {
-    position: "absolute",
-    top: -4,
-    right: -12,
-    backgroundColor: "#ef4444",
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
+  actionIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 4,
+  },
+  actionIcon: { fontSize: 22 },
+  actionInfo: { flex: 1 },
+  actionLabel: { color: "#f1f5f9", fontWeight: "700", fontSize: 15 },
+  actionDesc: { color: "#64748b", fontSize: 12, marginTop: 2, lineHeight: 16 },
+  actionChevron: { color: "#475569", fontSize: 22, fontWeight: "300" },
+  unreadBadge: {
+    backgroundColor: "#ef4444",
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
   },
   unreadBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
   logoutButton: {
     margin: 20,
-    backgroundColor: "#fff",
+    marginTop: 8,
+    backgroundColor: "#1e293b",
     borderWidth: 1.5,
-    borderColor: "#e2e8f0",
+    borderColor: "#334155",
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
