@@ -628,8 +628,24 @@ export default function App() {
           `Registered on blockchain.\nTx: ${txShort}\n\nPlease sign in.`,
           [{ text: "Sign In", onPress: () => setScreen("login") }]
         );
+      } else if (!result.onChain) {
+        // Blockchain unavailable — fall back to local-only registration
+        const exists = users[r].some((x) => x.username === u);
+        if (exists) {
+          Alert.alert("Error", "Username already taken. Please choose another.");
+          return;
+        }
+        setUsers((prev) => ({
+          ...prev,
+          [r]: [...prev[r], { username: u, password: p }],
+        }));
+        Alert.alert(
+          "Account Created",
+          "Registered locally (blockchain offline).\n\nPlease sign in.",
+          [{ text: "Sign In", onPress: () => setScreen("login") }]
+        );
       } else {
-        Alert.alert("Registration Failed", result.error ?? "Could not register on blockchain.");
+        Alert.alert("Registration Failed", result.error ?? "Could not register.");
       }
     } finally {
       setTxLoading(false);

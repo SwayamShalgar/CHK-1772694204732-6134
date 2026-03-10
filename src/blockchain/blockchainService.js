@@ -16,14 +16,11 @@ import { CONTRACT_ABI } from "./contractABI";
 // on a freshly-started node (deterministic, always the same).
 // ---------------------------------------------------------------------------
 
-export const CONTRACT_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+export const CONTRACT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
-// Android emulator: 10.0.2.2 maps to the host machine's localhost.
-// iOS Simulator / physical device on same network: use host LAN IP instead.
-const RPC_URL =
-  Platform.OS === "android"
-    ? "http://10.0.2.2:8545"
-    : "http://127.0.0.1:8545";
+// Physical Android device via ADB USB: use adb reverse tcp:8545 tcp:8545
+// then 127.0.0.1 on the device maps to the host's localhost.
+const RPC_URL = "http://127.0.0.1:8545";
 
 // Hardhat account #0 private key — publicly known, only holds test ETH.
 // Acts as a "gas relayer" so end-users don't need wallets.
@@ -34,6 +31,16 @@ const RELAYER_PRIVATE_KEY =
 // ─── INTERNAL ─────────────────────────────────────────────────────────────────
 
 let _contract = null;
+
+/** Rejects after `ms` milliseconds — used to prevent infinite hangs when the node is offline. */
+function _withTimeout(promise, ms = 6000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("RPC request timed out")), ms)
+    ),
+  ]);
+}
 
 /** Returns a keccak256 hash of the plain-text password (hex string). */
 function _hashPassword(password) {
@@ -56,22 +63,24 @@ async function _getContract() {
  * The password is hashed client-side before any network call so the
  * plain-text password never appears in a blockchain transaction.
  *
- * @returns {{ success: boolean, txHash?: string, error?: string }}
+ * @returns {{ success: boolean, onChain: boolean, txHash?: string, error?: string }}
+ *   onChain=false means the node was unreachable (caller may fall back to local).
  */
 export async function registerUserOnChain(username, role, password) {
   try {
     const contract = await _getContract();
     const passwordHash = _hashPassword(password);
-    const tx = await contract.registerUser(username, role, passwordHash);
-    const receipt = await tx.wait();
-    return { success: true, txHash: receipt.transactionHash };
+    const tx = await _withTimeout(contract.registerUser(username, role, passwordHash));
+    const receipt = await _withTimeout(tx.wait(), 30000);
+    return { success: true, onChain: true, txHash: receipt.transactionHash };
   } catch (err) {
+    _contract = null; // reset so the next call retries a fresh connection
     const msg = err?.reason ?? err?.message ?? String(err);
     if (msg.includes("Username already taken")) {
-      return { success: false, error: "Username already taken on blockchain." };
+      return { success: false, onChain: true, error: "Username already taken on blockchain." };
     }
     console.error("[Blockchain] registerUser:", msg);
-    return { success: false, error: "Blockchain unavailable. " + msg };
+    return { success: false, onChain: false, error: "Blockchain unavailable." };
   }
 }
 
@@ -85,9 +94,10 @@ export async function validateLoginOnChain(username, role, password) {
   try {
     const contract = await _getContract();
     const passwordHash = _hashPassword(password);
-    const valid = await contract.validateLogin(username, role, passwordHash);
+    const valid = await _withTimeout(contract.validateLogin(username, role, passwordHash));
     return { success: valid, onChain: true };
   } catch (err) {
+    _contract = null; // reset so the next call retries a fresh connection
     console.error("[Blockchain] validateLogin:", err?.message);
     return { success: false, onChain: false, error: "Blockchain unavailable." };
   }
