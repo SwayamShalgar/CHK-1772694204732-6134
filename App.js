@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { WebView } from "react-native-webview";
 import AdminBroadcastScreen from "./src/screens/AdminBroadcastScreen";
 import MessagesScreen from "./src/screens/MessagesScreen";
@@ -10,6 +10,7 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -19,6 +20,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import {
   registerUserOnChain,
   validateLoginOnChain,
@@ -29,6 +31,14 @@ import {
   clearSession,
   sessionExpiryLabel,
 } from "./src/utils/sessionManager";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import {
+  verifyAadhaarCard,
+  simulateFaceMatch,
+  doesUsernameMatchAadhaar,
+  maskAadhaar,
+  maskName,
+} from "./src/utils/aadhaarService";
 
 const SEED_USERS = {
   user: [{ username: "user", password: "user123" }],
@@ -304,6 +314,33 @@ function LoginScreen({ onLogin, onSignup, users, isLoading }) {
 }
 
 function SignupScreen({ onSignup, onBack, users, isLoading }) {
+  // step: 1 = Aadhaar card + name, 2 = Face scan, 3 = Account details
+  const [step, setStep] = useState(1);
+
+  // ── Step 1 state ──────────────────────────────────────────────────
+  const [cardImageUri, setCardImageUri] = useState(null);
+  const [enteredName, setEnteredName] = useState("");
+  const [aadhaarNumber, setAadhaarNumber] = useState("");
+  const [cardVerifying, setCardVerifying] = useState(false);
+  const [aadhaarRecord, setAadhaarRecord] = useState(null);
+
+  // ── Step 2 state ──────────────────────────────────────────────────
+  const [permission, requestPermission] = useCameraPermissions();
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [faceScanned, setFaceScanned] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const cameraRef = useRef(null);
+  const detectTimerRef = useRef(null);
+
+  // Auto-detect face 2 s after camera opens
+  useEffect(() => {
+    if (step === 2 && permission?.granted && !faceScanned) {
+      detectTimerRef.current = setTimeout(() => setFaceDetected(true), 2000);
+    }
+    return () => clearTimeout(detectTimerRef.current);
+  }, [step, permission?.granted]);
+
+  // ── Step 3 state ──────────────────────────────────────────────────
   const [role, setRole] = useState("user");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -312,20 +349,108 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  const handleSignup = () => {
-    if (!username.trim()) {
-      Alert.alert("Error", "Username is required.");
+  // Format Aadhaar number as XXXX XXXX XXXX
+  const handleAadhaarChange = (text) => {
+    const digits = text.replace(/\D/g, "").slice(0, 12);
+    const formatted = digits.match(/.{1,4}/g)?.join(" ") ?? digits;
+    setAadhaarNumber(formatted);
+  };
+
+  // ── Step 1: pick or photograph the Aadhaar card ───────────────────
+  const handlePickCardImage = async (source) => {
+    let result;
+    if (source === "camera") {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission Needed", "Camera permission is required to photograph your Aadhaar card.");
+        return;
+      }
+      result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [8, 5],
+        quality: 0.85,
+      });
+    } else {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission Needed", "Photo library access is required to select your Aadhaar card image.");
+        return;
+      }
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [8, 5],
+        quality: 0.85,
+      });
+    }
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      setCardImageUri(result.assets[0].uri);
+    }
+  };
+
+  // ── Step 1: verify card — mock OCR checks card image + name match ──
+  const handleVerifyCard = async () => {
+    if (!cardImageUri) {
+      Alert.alert("Card Photo Required", "Please photograph or upload your Aadhaar card first.");
       return;
     }
-    if (username.trim().length < 3) {
+    if (!enteredName.trim()) {
+      Alert.alert("Name Required", "Enter your name exactly as printed on the Aadhaar card.");
+      return;
+    }
+    const raw = aadhaarNumber.replace(/\s/g, "");
+    if (raw.length !== 12) {
+      Alert.alert("Invalid Aadhaar", "Enter the complete 12-digit Aadhaar number printed on your card.");
+      return;
+    }
+    setCardVerifying(true);
+    const result = await verifyAadhaarCard(raw, enteredName.trim(), cardImageUri);
+    setCardVerifying(false);
+    if (result.success) {
+      setAadhaarRecord(result.record);
+      // Pre-fill username with the Aadhaar first name
+      setUsername(result.record.name);
+      setTimeout(() => setStep(2), 1500);
+    } else {
+      Alert.alert("Verification Failed ❌", result.error);
+    }
+  };
+
+  // ── Step 2: capture selfie and match against card photo ───────────
+  const handleCaptureFace = async () => {
+    if (!faceDetected) {
+      Alert.alert("Face Not Ready", "Hold your face steady in the frame and wait for the green outline.");
+      return;
+    }
+    setScanning(true);
+    const result = await simulateFaceMatch();
+    setScanning(false);
+    if (result.matched) {
+      setFaceScanned(true);
+      setTimeout(() => setStep(3), 1200);
+    } else {
+      Alert.alert(
+        "Face Mismatch ❌",
+        "Your face does not match the photo on the Aadhaar card. Please ensure you are holding up the correct card and try again."
+      );
+    }
+  };
+
+  // ── Step 3: final account submission ───────────────────────────────
+  const handleSignup = () => {
+    if (!username.trim() || username.trim().length < 3) {
       Alert.alert("Error", "Username must be at least 3 characters.");
       return;
     }
-    if (!password) {
-      Alert.alert("Error", "Password is required.");
+    if (!doesUsernameMatchAadhaar(username.trim(), aadhaarRecord)) {
+      Alert.alert(
+        "Username Mismatch ❌",
+        "Username must match the name on your Aadhaar card.\n\nPlease keep the pre-filled name or use your Aadhaar-registered name."
+      );
       return;
     }
-    if (password.length < 6) {
+    if (!password || password.length < 6) {
       Alert.alert("Error", "Password must be at least 6 characters.");
       return;
     }
@@ -337,47 +462,286 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
       Alert.alert("Error", "Invalid admin invite code.");
       return;
     }
-    const exists = users[role].some((u) => u.username === username.trim());
-    if (exists) {
+    if (users[role].some((u) => u.username === username.trim())) {
       Alert.alert("Error", "Username already taken. Please choose another.");
       return;
     }
     onSignup(role, username.trim(), password);
   };
 
-  return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
-        <View style={styles.header}>
-          <View style={styles.shieldIcon}>
-            <Text style={styles.shieldText}>🛡️</Text>
+  // ── Shared progress bar ────────────────────────────────────────────
+  const StepBar = () => (
+    <View style={styles.stepBarRow}>
+      {[1, 2, 3].map((s) => (
+        <View
+          key={s}
+          style={[
+            styles.stepBarDot,
+            s < step ? styles.stepBarDone : s === step ? styles.stepBarActive : styles.stepBarPending,
+          ]}
+        />
+      ))}
+    </View>
+  );
+
+  const Header = () => (
+    <View style={styles.header}>
+      <View style={styles.shieldIcon}><Text style={styles.shieldText}>🛡️</Text></View>
+      <Text style={styles.appTitle}>WarSafe Network</Text>
+      <Text style={styles.appSubtitle}>Secure Communication Platform</Text>
+    </View>
+  );
+
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 1 — Aadhaar Card Photo + Name + Number
+  // ════════════════════════════════════════════════════════════════════
+  if (step === 1) {
+    return (
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+          <Header />
+
+          <View style={styles.card}>
+            <StepBar />
+            <Text style={styles.cardTitle}>Aadhaar Card Verification</Text>
+            <Text style={styles.stepSubtitle}>Step 1 of 3 — Identity Verification</Text>
+
+            {/* ── Card image capture ── */}
+            <Text style={styles.inputLabel}>Aadhaar Card Photo</Text>
+            <View style={styles.cardImageRow}>
+              {cardImageUri ? (
+                <Image source={{ uri: cardImageUri }} style={styles.cardImageThumb} resizeMode="cover" />
+              ) : (
+                <View style={styles.cardImagePlaceholder}>
+                  <Text style={{ fontSize: 30 }}>🪪</Text>
+                  <Text style={{ color: "#64748b", fontSize: 10, marginTop: 4 }}>No photo</Text>
+                </View>
+              )}
+              <View style={styles.cardImageButtons}>
+                <TouchableOpacity style={styles.cardImgBtn} onPress={() => handlePickCardImage("camera")}>
+                  <Text style={styles.cardImgBtnText}>📷  Camera</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.cardImgBtn} onPress={() => handlePickCardImage("gallery")}>
+                  <Text style={styles.cardImgBtnText}>🖼️  Gallery</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <Text style={styles.adminCodeHint}>
+              Take a clear, well-lit photo of your physical Aadhaar card.
+            </Text>
+
+            {/* ── Name on card ── */}
+            <Text style={styles.inputLabel}>Name (as on Aadhaar Card)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Full name exactly as printed on card"
+              placeholderTextColor="#9ca3af"
+              value={enteredName}
+              onChangeText={setEnteredName}
+              autoCapitalize="words"
+              autoCorrect={false}
+            />
+
+            {/* ── Aadhaar number ── */}
+            <Text style={styles.inputLabel}>Aadhaar Number (12 digits)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="XXXX XXXX XXXX"
+              placeholderTextColor="#9ca3af"
+              value={aadhaarNumber}
+              onChangeText={handleAadhaarChange}
+              keyboardType="numeric"
+              maxLength={14}
+            />
+            <Text style={styles.adminCodeHint}>
+              12-digit number printed at the bottom of your Aadhaar card.
+            </Text>
+
+            {/* ── OCR success banner ── */}
+            {aadhaarRecord && (
+              <View style={styles.aadhaarSuccessBanner}>
+                <Text style={{ fontSize: 22 }}>✅</Text>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.aadhaarSuccessTitle}>Card Verified</Text>
+                  <Text style={styles.aadhaarSuccessText}>Name: {maskName(aadhaarRecord.displayName)}</Text>
+                  <Text style={styles.aadhaarSuccessText}>DOB: {aadhaarRecord.dob}</Text>
+                </View>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.loginButton, styles.loginButtonUser, { marginTop: 8 }, cardVerifying && styles.buttonDisabled]}
+              onPress={handleVerifyCard}
+              activeOpacity={0.85}
+              disabled={cardVerifying}
+            >
+              {cardVerifying ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <ActivityIndicator color="#fff" size="small" />
+                  <Text style={styles.loginButtonText}>Reading Card…</Text>
+                </View>
+              ) : (
+                <Text style={styles.loginButtonText}>🪪  Verify Aadhaar Card</Text>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.signupLinkRow}>
+              <Text style={styles.signupLinkText}>Already have an account? </Text>
+              <TouchableOpacity onPress={onBack}>
+                <Text style={[styles.signupLinkText, styles.signupLinkAction]}>Sign In</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-          <Text style={styles.appTitle}>WarSafe Network</Text>
-          <Text style={styles.appSubtitle}>Secure Communication Platform</Text>
+          <StatusBar style="light" />
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 2 — Face Scan (compare selfie with Aadhaar card photo)
+  // ════════════════════════════════════════════════════════════════════
+  if (step === 2) {
+    if (!permission) {
+      return (
+        <View style={[styles.scrollContainer, { flex: 1 }]}>
+          <ActivityIndicator color="#3b82f6" size="large" />
+          <Text style={{ color: "#94a3b8", marginTop: 12 }}>Requesting camera access…</Text>
         </View>
+      );
+    }
+    if (!permission.granted) {
+      return (
+        <View style={[styles.scrollContainer, { flex: 1 }]}>
+          <View style={styles.card}>
+            <Text style={{ fontSize: 40, textAlign: "center", marginBottom: 16 }}>📷</Text>
+            <Text style={[styles.cardTitle, { marginBottom: 8 }]}>Camera Required</Text>
+            <Text style={{ color: "#94a3b8", textAlign: "center", marginBottom: 20, fontSize: 14 }}>
+              Camera permission is needed to scan your face and match it with your Aadhaar card photo.
+            </Text>
+            <TouchableOpacity style={[styles.loginButton, styles.loginButtonUser]} onPress={requestPermission}>
+              <Text style={styles.loginButtonText}>Grant Camera Permission</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={{ flex: 1, backgroundColor: "#0f172a" }}>
+        <ScrollView contentContainerStyle={[styles.scrollContainer, { paddingBottom: 40 }]} keyboardShouldPersistTaps="handled">
+          <Header />
+
+          <View style={styles.card}>
+            <StepBar />
+            <Text style={styles.cardTitle}>Face Verification</Text>
+            <Text style={styles.stepSubtitle}>Step 2 of 3 — Biometric Match</Text>
+
+            {/* Aadhaar card reference thumbnail */}
+            {cardImageUri && (
+              <View style={styles.cardThumbnailRow}>
+                <Image source={{ uri: cardImageUri }} style={styles.cardThumbnailSmall} resizeMode="cover" />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={{ color: "#94a3b8", fontSize: 11, fontWeight: "600" }}>COMPARING AGAINST</Text>
+                  <Text style={{ color: "#f1f5f9", fontSize: 13, fontWeight: "700", marginTop: 2 }}>
+                    Aadhaar Card Photo
+                  </Text>
+                  <Text style={{ color: "#64748b", fontSize: 12 }}>{maskName(aadhaarRecord?.displayName ?? "")}</Text>
+                </View>
+                <Text style={{ fontSize: 20 }}>🆚</Text>
+              </View>
+            )}
+
+            {/* Front camera for selfie */}
+            <View style={styles.cameraContainer}>
+              <CameraView ref={cameraRef} style={styles.camera} facing="front" />
+              <View style={styles.cameraOverlay} pointerEvents="none">
+                <View style={[styles.faceBox, faceDetected && styles.faceBoxDetected]} />
+                <Text style={styles.faceBoxHint}>
+                  {faceDetected ? "Face detected ✓" : "Align face in oval…"}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.faceStatusRow}>
+              <Text style={{ fontSize: 16 }}>{faceDetected ? "✅" : "⏳"}</Text>
+              <Text style={[styles.faceStatusText, { color: faceDetected ? "#22c55e" : "#f59e0b" }]}>
+                {faceScanned
+                  ? "Face matched with Aadhaar card ✓"
+                  : faceDetected
+                  ? "Face detected — tap Scan to match"
+                  : "Scanning… hold face in oval"}
+              </Text>
+            </View>
+
+            {faceScanned ? (
+              <View style={styles.aadhaarSuccessBanner}>
+                <Text style={{ fontSize: 22 }}>✅</Text>
+                <Text style={[styles.aadhaarSuccessTitle, { marginLeft: 10 }]}>
+                  Face Matched with Aadhaar Card
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[styles.loginButton, styles.loginButtonUser, { marginTop: 8 }, scanning && styles.buttonDisabled]}
+                onPress={handleCaptureFace}
+                activeOpacity={0.85}
+                disabled={scanning}
+              >
+                {scanning ? (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={styles.loginButtonText}>Comparing with Aadhaar photo…</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.loginButtonText}>{"📸  Scan & Match Face"}</Text>
+                )}
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity style={{ marginTop: 14, alignSelf: "center" }} onPress={() => { setFaceDetected(false); setFaceScanned(false); setStep(1); }}>
+              <Text style={[styles.signupLinkText, styles.signupLinkAction]}>← Back</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 3 — Account Details
+  // ════════════════════════════════════════════════════════════════════
+  return (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+        <Header />
 
         <View style={styles.card}>
+          <StepBar />
           <Text style={styles.cardTitle}>Create Account</Text>
+          <Text style={styles.stepSubtitle}>Step 3 of 3 — Account Details</Text>
+
+          {/* Verified identity strip */}
+          <View style={styles.aadhaarVerifiedBadge}>
+            <Text style={{ fontSize: 14 }}>🪪</Text>
+            <Text style={styles.aadhaarVerifiedBadgeText}>
+              {maskAadhaar(aadhaarNumber)}{"  |  "}{maskName(aadhaarRecord?.displayName ?? "")}
+            </Text>
+            <Text style={{ fontSize: 14 }}>✅</Text>
+          </View>
 
           <View style={styles.roleToggleContainer}>
             <TouchableOpacity
               style={[styles.roleButton, role === "user" && styles.roleButtonActive]}
-              onPress={() => { setRole("user"); setUsername(""); setPassword(""); setConfirmPassword(""); setAdminCode(""); }}
+              onPress={() => { setRole("user"); setAdminCode(""); }}
             >
-              <Text style={[styles.roleButtonText, role === "user" && styles.roleButtonTextActive]}>
-                User
-              </Text>
+              <Text style={[styles.roleButtonText, role === "user" && styles.roleButtonTextActive]}>User</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.roleButton, role === "admin" && styles.roleButtonActiveAdmin]}
-              onPress={() => { setRole("admin"); setUsername(""); setPassword(""); setConfirmPassword(""); setAdminCode(""); }}
+              onPress={() => setRole("admin")}
             >
-              <Text style={[styles.roleButtonText, role === "admin" && styles.roleButtonTextActive]}>
-                Admin
-              </Text>
+              <Text style={[styles.roleButtonText, role === "admin" && styles.roleButtonTextActive]}>Admin</Text>
             </TouchableOpacity>
           </View>
 
@@ -390,13 +754,16 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
           <Text style={styles.inputLabel}>Username</Text>
           <TextInput
             style={styles.input}
-            placeholder={`Choose a ${role} username`}
+            placeholder="Must match your Aadhaar name"
             placeholderTextColor="#9ca3af"
             value={username}
             onChangeText={setUsername}
             autoCapitalize="none"
             autoCorrect={false}
           />
+          <Text style={styles.adminCodeHint}>
+            Pre-filled from Aadhaar. Must match your registered name.
+          </Text>
 
           <Text style={styles.inputLabel}>Password</Text>
           <View style={styles.passwordContainer}>
@@ -448,15 +815,21 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
           )}
 
           <TouchableOpacity
-            style={[styles.loginButton, role === "admin" ? styles.loginButtonAdmin : styles.loginButtonUser, { marginTop: 8 }, isLoading && styles.buttonDisabled]}
+            style={[
+              styles.loginButton,
+              role === "admin" ? styles.loginButtonAdmin : styles.loginButtonUser,
+              { marginTop: 8 },
+              isLoading && styles.buttonDisabled,
+            ]}
             onPress={handleSignup}
             activeOpacity={0.85}
             disabled={isLoading}
           >
-            {isLoading
-              ? <ActivityIndicator color="#fff" size="small" />
-              : <Text style={styles.loginButtonText}>Sign Up as {role === "admin" ? "Admin" : "User"}</Text>
-            }
+            {isLoading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.loginButtonText}>Sign Up as {role === "admin" ? "Admin" : "User"}</Text>
+            )}
           </TouchableOpacity>
 
           <View style={styles.signupLinkRow}>
@@ -466,12 +839,12 @@ function SignupScreen({ onSignup, onBack, users, isLoading }) {
             </TouchableOpacity>
           </View>
         </View>
-
         <StatusBar style="light" />
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
 
 function MapScreen({ onBack }) {
   return (
@@ -888,6 +1261,184 @@ const styles = StyleSheet.create({
     marginTop: -8,
     marginBottom: 14,
     paddingHorizontal: 2,
+  },
+
+  // ── Aadhaar card image capture styles ────────────────────────────
+  cardImageRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+    gap: 10,
+  },
+  cardImageThumb: {
+    width: 110,
+    height: 70,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: "#22c55e",
+  },
+  cardImagePlaceholder: {
+    width: 110,
+    height: 70,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#334155",
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0f172a",
+  },
+  cardImageButtons: {
+    flex: 1,
+    gap: 8,
+  },
+  cardImgBtn: {
+    backgroundColor: "#1e3a5f",
+    borderRadius: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    alignItems: "center",
+  },
+  cardImgBtnText: {
+    color: "#93c5fd",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  cardThumbnailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#334155",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+  },
+  cardThumbnailSmall: {
+    width: 72,
+    height: 46,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#3b82f6",
+  },
+  faceBoxHint: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 11,
+    marginTop: 8,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  stepBarRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 20,
+  },
+  stepBarDot: {
+    height: 8,
+    borderRadius: 4,
+  },
+  stepBarActive: {
+    width: 24,
+    backgroundColor: "#3b82f6",
+  },
+  stepBarDone: {
+    width: 8,
+    backgroundColor: "#22c55e",
+  },
+  stepBarPending: {
+    width: 8,
+    backgroundColor: "#334155",
+  },
+  stepSubtitle: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "center",
+    marginTop: -14,
+    marginBottom: 20,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  aadhaarSuccessBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#052e16",
+    borderWidth: 1,
+    borderColor: "#16a34a",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  aadhaarSuccessTitle: {
+    color: "#86efac",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  aadhaarSuccessText: {
+    color: "#4ade80",
+    fontSize: 13,
+    marginTop: 2,
+  },
+  aadhaarVerifiedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#0f2b1f",
+    borderWidth: 1,
+    borderColor: "#16a34a",
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 18,
+  },
+  aadhaarVerifiedBadgeText: {
+    color: "#4ade80",
+    fontSize: 12,
+    fontWeight: "600",
+    flex: 1,
+    flexWrap: "wrap",
+  },
+  cameraContainer: {
+    width: "100%",
+    height: 280,
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "#000",
+    marginBottom: 12,
+    position: "relative",
+  },
+  camera: {
+    flex: 1,
+  },
+  cameraOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  faceBox: {
+    width: 180,
+    height: 220,
+    borderWidth: 2,
+    borderColor: "#f59e0b",
+    borderRadius: 90,
+    borderStyle: "dashed",
+  },
+  faceBoxDetected: {
+    borderColor: "#22c55e",
+    borderStyle: "solid",
+  },
+  faceStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
+  },
+  faceStatusText: {
+    fontSize: 13,
+    fontWeight: "600",
+    flex: 1,
   },
 
   dashContainer: { flex: 1, backgroundColor: "#f8fafc" },
