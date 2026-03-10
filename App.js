@@ -1,6 +1,12 @@
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { WebView } from "react-native-webview";
+import AdminBroadcastScreen from "./src/screens/AdminBroadcastScreen";
+import MessagesScreen from "./src/screens/MessagesScreen";
+import { tearDownAll } from "./src/bluetooth/bluetoothService";
+import {
+  getUnreadCount,
+} from "./src/utils/offlineMessages";
 import {
   ActivityIndicator,
   Alert,
@@ -194,7 +200,7 @@ function LoginScreen({ onLogin, onSignup, users, isLoading }) {
       Alert.alert("Error", "Please enter your password.");
       return;
     }
-    // Validation and blockchain call handled by App's handleLogin
+
     onLogin(role, username.trim(), password);
   };
 
@@ -492,9 +498,39 @@ function MapScreen({ onBack }) {
 function DashboardScreen({ role, username, sessionData, onLogout }) {
   const isAdmin = role === "admin";
   const [showMap, setShowMap] = useState(false);
+  const [showMessages, setShowMessages] = useState(false);
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      const n = await getUnreadCount();
+      if (active) setUnread(n);
+    };
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
 
   if (showMap) {
     return <MapScreen onBack={() => setShowMap(false)} />;
+  }
+
+  if (showMessages) {
+    if (isAdmin) {
+      return (
+        <AdminBroadcastScreen
+          username={username}
+          onBack={() => setShowMessages(false)}
+        />
+      );
+    }
+    return (
+      <MessagesScreen
+        username={username}
+        onBack={() => setShowMessages(false)}
+      />
+    );
   }
 
   return (
@@ -513,7 +549,7 @@ function DashboardScreen({ role, username, sessionData, onLogout }) {
       </View>
 
       <ScrollView style={styles.dashContent} contentContainerStyle={{ padding: 20 }}>
-        
+
         <Text style={styles.sectionTitle}>Quick Access</Text>
         <View style={styles.tileRow}>
           <View style={[styles.tile, { backgroundColor: "#eff6ff" }]}>
@@ -530,10 +566,23 @@ function DashboardScreen({ role, username, sessionData, onLogout }) {
             <Text style={styles.tileIcon}>📢</Text>
             <Text style={styles.tileLabel}>Alerts</Text>
           </View>
-          <View style={[styles.tile, { backgroundColor: "#fdf4ff" }]}>
-            <Text style={styles.tileIcon}>💬</Text>
-            <Text style={styles.tileLabel}>Messages</Text>
-          </View>
+          <TouchableOpacity style={[styles.tile, { backgroundColor: "#fdf4ff" }]} onPress={() => setShowMessages(true)}>
+            <View style={{ position: "relative", alignItems: "center" }}>
+              <Text style={styles.tileIcon}>💬</Text>
+              {!isAdmin && unread > 0 && (
+                <View style={styles.unreadBadge}>
+                  <Text style={styles.unreadBadgeText}>{unread > 99 ? "99+" : unread}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.tileLabel}>{isAdmin ? "Broadcast" : "Messages"}</Text>
+            {isAdmin && (
+              <Text style={styles.tileSubLabel}>Send alerts</Text>
+            )}
+            {!isAdmin && unread > 0 && (
+              <Text style={[styles.tileSubLabel, { color: "#2563eb" }]}>{unread} unread</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
       </ScrollView>
@@ -605,6 +654,7 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    tearDownAll();
     await clearSession();
     setScreen("login");
     setRole(null);
@@ -886,6 +936,20 @@ const styles = StyleSheet.create({
   },
   tileIcon: { fontSize: 28, marginBottom: 8 },
   tileLabel: { fontSize: 13, fontWeight: "600", color: "#374151", textAlign: "center" },
+  tileSubLabel: { fontSize: 10, color: "#94a3b8", marginTop: 2, textAlign: "center" },
+  unreadBadge: {
+    position: "absolute",
+    top: -4,
+    right: -12,
+    backgroundColor: "#ef4444",
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  unreadBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
   logoutButton: {
     margin: 20,
     backgroundColor: "#fff",

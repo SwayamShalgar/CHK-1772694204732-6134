@@ -1,6 +1,3 @@
-// Auto-generated from blockchain/artifacts/contracts/UserRegistry.sol/UserRegistry.json
-// DO NOT edit manually — re-run `cd blockchain && npm run compile` to regenerate.
-
 export const CONTRACT_ABI = [
   {
     anonymous: false,
