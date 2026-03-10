@@ -333,6 +333,7 @@ const LEAFLET_HTML = `
 
       /* Clear previous route layers */
       function clearRoute() {
+        if (window._routeLayerCasing) { map.removeLayer(window._routeLayerCasing); window._routeLayerCasing = null; }
         if (window._routeLayer)  { map.removeLayer(window._routeLayer);  window._routeLayer  = null; }
         if (window._userMarker)  { map.removeLayer(window._userMarker);  window._userMarker  = null; }
         if (window._destMarker)  { map.removeLayer(window._destMarker);  window._destMarker  = null; }
@@ -367,30 +368,76 @@ const LEAFLET_HTML = `
           return;
         }
 
-        /* Draw route polyline */
-        window._routeLayer = L.polyline(bestPath, {
-          color: '#22c55e', weight: 5, opacity: 0.92, lineJoin: 'round'
-        }).addTo(map);
-
-        /* Destination safehouse marker with special popup */
+        /* Place destination safehouse marker immediately */
         window._destMarker = L.marker(bestHouse.pos, { icon: safehouseIcon })
           .addTo(map)
           .bindPopup(
-            '<b style="color:#16a34a">\uD83C\uDFC1 Nearest Safehouse</b><br>' +
-            '<b>' + bestHouse.name + '</b><br>City: ' + bestHouse.city + '<br>' +
-            '<span style="color:#16a34a;font-weight:600">~' + Math.round(bestCost) + ' km (safe route)<\/span>'
+            '<b style="color:#16a34a">\uD83C\uDFC1 Nearest Safehouse<\/b><br>' +
+            '<b>' + bestHouse.name + '<\/b><br>City: ' + bestHouse.city
           ).openPopup();
 
-        map.fitBounds(window._routeLayer.getBounds(), { padding: [50, 50] });
+        /* Helper: notify React Native with final distance */
+        function notifyRoute(distKm) {
+          window._destMarker
+            .getPopup()
+            .setContent(
+              '<b style="color:#16a34a">\uD83C\uDFC1 Nearest Safehouse<\/b><br>' +
+              '<b>' + bestHouse.name + '<\/b><br>City: ' + bestHouse.city + '<br>' +
+              '<span style="color:#16a34a;font-weight:700">~' + distKm + ' km via safe roads<\/span>'
+            );
+          if (window.ReactNativeWebView)
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'routeResult',
+              safehouse: bestHouse.name,
+              city: bestHouse.city,
+              distanceKm: distKm
+            }));
+        }
 
-        /* Notify React Native */
-        if (window.ReactNativeWebView)
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'routeResult',
-            safehouse: bestHouse.name,
-            city: bestHouse.city,
-            distanceKm: Math.round(bestCost)
-          }));
+        /* Fallback: draw the A* grid path as a dashed line */
+        function drawFallback() {
+          window._routeLayer = L.polyline(bestPath, {
+            color: '#22c55e', weight: 4, opacity: 0.75,
+            lineJoin: 'round', dashArray: '10 7'
+          }).addTo(map);
+          map.fitBounds(window._routeLayer.getBounds(), { padding: [50, 50] });
+          notifyRoute(Math.round(bestCost));
+        }
+
+        /* Primary: fetch real road geometry from OSRM (OpenStreetMap roads, no key needed) */
+        var osrmUrl =
+          'https://router.project-osrm.org/route/v1/driving/' +
+          userLng + ',' + userLat + ';' +
+          bestHouse.pos[1] + ',' + bestHouse.pos[0] +
+          '?overview=full&geometries=geojson';
+
+        fetch(osrmUrl)
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.code === 'Ok' && data.routes && data.routes[0]) {
+              /* Convert GeoJSON [lng, lat] → Leaflet [lat, lng] */
+              var latlngs = data.routes[0].geometry.coordinates.map(function(c) {
+                return [c[1], c[0]];
+              });
+              var distKm = Math.round(data.routes[0].distance / 1000);
+
+              /* Casing (dark outline for contrast over map tiles) */
+              window._routeLayerCasing = L.polyline(latlngs, {
+                color: '#064e0e', weight: 9, opacity: 0.55, lineJoin: 'round'
+              }).addTo(map);
+
+              /* Main route line */
+              window._routeLayer = L.polyline(latlngs, {
+                color: '#22c55e', weight: 5, opacity: 0.95, lineJoin: 'round'
+              }).addTo(map);
+
+              map.fitBounds(window._routeLayer.getBounds(), { padding: [50, 50] });
+              notifyRoute(distKm);
+            } else {
+              drawFallback();
+            }
+          })
+          .catch(function() { drawFallback(); });
       };
     })();
   <\/script>
